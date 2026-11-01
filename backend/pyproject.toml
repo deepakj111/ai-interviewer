@@ -24,6 +24,7 @@ select = [
 ]
 ignore = [
     "E501", # line length handled by formatter
+    "B008", # FastAPI dependency injection and query/form parameters in route signatures
 ]
 
 [tool.ruff.lint.isort]
