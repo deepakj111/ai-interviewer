@@ -114,3 +114,6 @@ def test_websocket_interview_simulation():
         )
         reply_msg = websocket.receive_json()
         assert reply_msg["type"] == "transcript_caption"
+
+        # Cleanly signal close
+        websocket.send_json({"type": "close"})

@@ -273,7 +273,10 @@ class LiveInterviewSessionHandler:
                 msg = await self.websocket.receive_json()
                 msg_type = msg.get("type")
 
-                if msg_type == "text_turn":
+                if msg_type == "close":
+                    break
+
+                elif msg_type == "text_turn":
                     user_text = msg.get("text", "")
                     await self._save_transcript_turn("candidate", user_text)
 
