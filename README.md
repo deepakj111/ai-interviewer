@@ -120,11 +120,20 @@ ai-interviewer/
 
 ## 🚀 Quickstart
 
-### Prerequisites
+### Prerequisites & Authentication Options
 
 - **Python 3.11+**
 - **Node.js 20+**
-- **Gemini API Key** (from [Google AI Studio](https://aistudio.google.com/))
+- **Authentication Options**:
+  - **Option 1: Zero-Key Local Mode (No API Key Required)**
+    - You can run the entire platform without any API key or Google Cloud account.
+    - Python execution (Pyodide WASM), SQL queries (DuckDB-WASM), local webcam mirror, drawing canvas, stage progression, and deterministic BARS evaluations run 100% in your browser and local SQLite with zero setup.
+  - **Option 2: Google AI Studio API Key (Recommended for Live Voice)**
+    - For real-time bidirectional voice conversation with Gemini Multimodal Live, obtain a free API key at **[aistudio.google.com/apikey](https://aistudio.google.com/apikey)** (takes 10 seconds, zero billing setup).
+    - Provide it either via the UI setup screen (stored only in browser `sessionStorage`) or in your `.env` file as `GEMINI_API_KEY`.
+  - **Option 3: Google Cloud Application Default Credentials (ADC / Vertex AI)**
+    - If you authenticated using `gcloud auth application-default login`, the unified `google-genai` SDK can communicate with Vertex AI.
+    - Note that Vertex AI requires an active Google Cloud project with billing and the Vertex AI API (`aiplatform.googleapis.com`) enabled. The live bidirectional voice WebSocket stream is natively supported out of the box via Google AI Studio keys.
 
 ---
 
