@@ -6,14 +6,15 @@ import {
   Sparkles,
   ShieldCheck,
   FileText,
-  Briefcase,
   Key,
   Layers,
   ArrowRight,
   Code,
   Cpu,
-  Database,
   CheckCircle,
+  Lock,
+  X,
+  UploadCloud,
 } from "lucide-react";
 
 export default function OnboardingPage() {
@@ -34,10 +35,21 @@ export default function OnboardingPage() {
     }
   };
 
+  const handleRemoveResume = () => {
+    setResumeFile(null);
+    if (interviewMode === "RESUME_DEEP_DIVE") {
+      setInterviewMode("SQL_PYTHON_CODING");
+    }
+  };
+
   const handleStartInterview = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
-    setErrorMsg(null);
+    if (interviewMode === "RESUME_DEEP_DIVE" && !resumeFile) {
+      setErrorMsg("Please upload a PDF resume to start the Resume Bar-Raiser track, or select another interview track.");
+      setIsLoading(false);
+      return;
+    }
 
     // Persist API key in sessionStorage for BYOK security
     if (apiKey.trim()) {
@@ -82,26 +94,30 @@ export default function OnboardingPage() {
     {
       id: "FULL_LOOP",
       title: "Full Loop (Complete)",
-      desc: "All 5 stages: Intro → Resume Deep-Dive → Coding (SQL/Python) → ML System Design → Wrap-Up",
+      desc: "All 5 stages: Intro → Resume Probing → Coding (SQL/Python) → ML System Design → Wrap-Up",
       icon: Layers,
+      requiresResume: false,
     },
     {
       id: "RESUME_DEEP_DIVE",
       title: "Resume Bar-Raiser",
       desc: "3-layer grilling probes on technical metrics, leakage, latency SLAs, and drift",
       icon: FileText,
+      requiresResume: true,
     },
     {
       id: "SQL_PYTHON_CODING",
       title: "SQL & Python Coding",
       desc: "Live Monaco IDE with in-browser DuckDB-WASM and Pyodide WebAssembly",
       icon: Code,
+      requiresResume: false,
     },
     {
       id: "ML_SYSTEM_DESIGN",
       title: "ML System Design",
       desc: "Interactive architecture whiteboard for high-throughput feature stores and ranking funnels",
       icon: Cpu,
+      requiresResume: false,
     },
   ];
 
@@ -156,11 +172,11 @@ export default function OnboardingPage() {
               <label className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
                 <Key className="w-4 h-4 text-blue-400" /> Gemini API Key (BYOK)
               </label>
-              <span className="text-[11px] text-slate-500">Optional if set in backend .env</span>
+              <span className="text-[11px] text-slate-500">Optional (Zero-Key Local Mode enabled)</span>
             </div>
             <input
               type="password"
-              placeholder="AIzaSy... (Stored in browser sessionStorage only)"
+              placeholder="AIzaSy... (Leave blank for zero-key local mode)"
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
               className="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-blue-500 transition-colors font-mono"
@@ -198,55 +214,129 @@ export default function OnboardingPage() {
             </div>
           </div>
 
-          {/* Section 3: Resume Upload */}
+          {/* Section 3: Resume Upload (Optional) */}
           <div className="p-6 rounded-2xl glass-panel border border-slate-800 bg-slate-900/60">
-            <label className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2 mb-2">
-              <FileText className="w-4 h-4 text-blue-400" /> Upload PDF Resume
-            </label>
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
+                <FileText className="w-4 h-4 text-blue-400" /> Upload PDF Resume
+              </label>
+              <span className="text-[11px] text-blue-400 font-semibold uppercase tracking-wider">
+                Optional
+              </span>
+            </div>
             <p className="text-xs text-slate-400 mb-3">
-              PyMuPDF extracts your technical claim graph to formulate realistic bar-raiser probes.
+              Upload your resume to unlock the <strong>Resume Bar-Raiser</strong> track and enable targeted 3-layer grilling probes.
             </p>
-            <input
-              type="file"
-              accept=".pdf"
-              onChange={handleFileChange}
-              className="w-full text-xs text-slate-400 file:mr-4 file:py-2.5 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-semibold file:bg-blue-600 file:text-white hover:file:bg-blue-500 cursor-pointer"
-            />
+
+            {resumeFile ? (
+              <div className="flex items-center justify-between p-3.5 rounded-xl bg-slate-950 border border-slate-800">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                    <CheckCircle className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <span className="text-xs font-semibold text-slate-200 block truncate max-w-xs md:max-w-md">
+                      {resumeFile.name}
+                    </span>
+                    <span className="text-[10px] text-emerald-400 font-medium">
+                      {(resumeFile.size / 1024).toFixed(1)} KB • Ready for extraction
+                    </span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleRemoveResume}
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-rose-950/30 transition-colors"
+                  title="Remove uploaded resume"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            ) : (
+              <label className="flex flex-col items-center justify-center p-6 border-2 border-dashed border-slate-800 hover:border-blue-500/50 rounded-xl cursor-pointer bg-slate-950/40 hover:bg-slate-950/80 transition-all">
+                <UploadCloud className="w-8 h-8 text-slate-500 mb-2" />
+                <span className="text-xs font-semibold text-slate-300">
+                  Click to browse or drag and drop your PDF resume
+                </span>
+                <span className="text-[10px] text-slate-500 mt-1">
+                  PDF format (Strictly processed local-only)
+                </span>
+                <input
+                  type="file"
+                  accept=".pdf"
+                  onChange={handleFileChange}
+                  className="hidden"
+                />
+              </label>
+            )}
           </div>
 
           {/* Section 4: Interview Mode Selector */}
           <div className="space-y-3">
-            <label className="text-xs font-bold uppercase tracking-wider text-slate-300 block pl-1">
-              Select Interview Track
-            </label>
+            <div className="flex items-center justify-between pl-1">
+              <label className="text-xs font-bold uppercase tracking-wider text-slate-300 block">
+                Select Interview Track
+              </label>
+              {!resumeFile && (
+                <span className="text-[11px] text-amber-400/90 flex items-center gap-1 font-medium">
+                  <Lock className="w-3 h-3" /> Resume track locked without upload
+                </span>
+              )}
+            </div>
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               {modes.map((m) => {
                 const Icon = m.icon;
                 const isSelected = interviewMode === m.id;
+                const isDisabled = m.requiresResume && !resumeFile;
+
                 return (
                   <div
                     key={m.id}
-                    onClick={() => setInterviewMode(m.id)}
-                    className={`p-4 rounded-2xl cursor-pointer transition-all border ${
-                      isSelected
-                        ? "bg-blue-600/10 border-blue-500 shadow-lg shadow-blue-500/10"
-                        : "bg-slate-900/50 border-slate-800 hover:border-slate-700"
+                    onClick={() => {
+                      if (!isDisabled) {
+                        setInterviewMode(m.id);
+                      }
+                    }}
+                    className={`p-4 rounded-2xl transition-all border relative ${
+                      isDisabled
+                        ? "opacity-45 bg-slate-950/50 border-slate-800/50 cursor-not-allowed select-none"
+                        : isSelected
+                        ? "bg-blue-600/10 border-blue-500 shadow-lg shadow-blue-500/10 cursor-pointer"
+                        : "bg-slate-900/50 border-slate-800 hover:border-slate-700 cursor-pointer"
                     }`}
                   >
                     <div className="flex items-center justify-between mb-2">
                       <div className="flex items-center gap-2.5">
                         <div
                           className={`p-2 rounded-lg ${
-                            isSelected ? "bg-blue-600 text-white" : "bg-slate-800 text-slate-400"
+                            isDisabled
+                              ? "bg-slate-800 text-slate-500"
+                              : isSelected
+                              ? "bg-blue-600 text-white"
+                              : "bg-slate-800 text-slate-400"
                           }`}
                         >
                           <Icon className="w-4 h-4" />
                         </div>
-                        <h3 className="text-sm font-semibold text-slate-200">{m.title}</h3>
+                        <h3 className={`text-sm font-semibold ${isDisabled ? "text-slate-400" : "text-slate-200"}`}>
+                          {m.title}
+                        </h3>
                       </div>
-                      {isSelected && <CheckCircle className="w-4 h-4 text-blue-400" />}
+
+                      {isDisabled ? (
+                        <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-slate-800 text-[10px] text-slate-400 font-medium">
+                          <Lock className="w-3 h-3 text-slate-400" />
+                          <span>Requires Resume</span>
+                        </div>
+                      ) : isSelected ? (
+                        <CheckCircle className="w-4 h-4 text-blue-400" />
+                      ) : null}
                     </div>
-                    <p className="text-xs text-slate-400 pl-1">{m.desc}</p>
+
+                    <p className={`text-xs pl-1 leading-relaxed ${isDisabled ? "text-slate-500" : "text-slate-400"}`}>
+                      {m.desc}
+                    </p>
                   </div>
                 );
               })}
@@ -266,7 +356,7 @@ export default function OnboardingPage() {
             {isLoading ? (
               <span className="flex items-center gap-2">
                 <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                Analyzing Resume & Initializing Interview Room...
+                Initializing Interview Room...
               </span>
             ) : (
               <>
