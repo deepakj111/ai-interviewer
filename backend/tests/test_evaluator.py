@@ -101,4 +101,3 @@ async def test_rubric_evaluator_abrupt_termination():
     assert report.technical_depth.score == 1
     assert report.code_quality.score == 1
     assert len(report.question_critiques) >= 1
-

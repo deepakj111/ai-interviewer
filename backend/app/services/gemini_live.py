@@ -291,21 +291,13 @@ class LiveInterviewSessionHandler:
                             "Please review the problem statement in your technical workbench and walk me through your initial approach before writing code."
                         )
                     elif current_stage == "LIVE_CODING_SQL_PYTHON":
-                        reply = (
-                            "Good framing. What are the key edge cases (e.g. empty inputs, duplicate keys) and how does your approach achieve optimal Big-O time and space complexity?"
-                        )
+                        reply = "Good framing. What are the key edge cases (e.g. empty inputs, duplicate keys) and how does your approach achieve optimal Big-O time and space complexity?"
                     elif current_stage == "ML_SYSTEM_DESIGN":
-                        reply = (
-                            "Understood. How would your architecture handle downstream feature store degradation if p99 latency spikes during peak 50,000 QPS load?"
-                        )
+                        reply = "Understood. How would your architecture handle downstream feature store degradation if p99 latency spikes during peak 50,000 QPS load?"
                     elif current_stage == "RESUME_DEEP_DIVE":
-                        reply = (
-                            "How did you prevent temporal data leakage between your training features and inference pipeline, and what was your label delay window?"
-                        )
+                        reply = "How did you prevent temporal data leakage between your training features and inference pipeline, and what was your label delay window?"
                     else:
-                        reply = (
-                            "Understood. Let's discuss the production trade-offs and monitoring metrics for this implementation."
-                        )
+                        reply = "Understood. Let's discuss the production trade-offs and monitoring metrics for this implementation."
 
                     await self.websocket.send_json(
                         {
@@ -322,11 +314,14 @@ class LiveInterviewSessionHandler:
                     error = msg.get("error")
                     await self._save_transcript_turn(
                         "candidate",
-                        f"[Code Update]:\n{code}\n[Stdout]: {stdout}" + (f"\n[Error]: {error}" if error else ""),
+                        f"[Code Update]:\n{code}\n[Stdout]: {stdout}"
+                        + (f"\n[Error]: {error}" if error else ""),
                         code_snapshot=code,
                     )
                     asyncio.create_task(
-                        self._trigger_shadow_supervisor(code, f"Code execution stdout: {stdout}; Error: {error}")
+                        self._trigger_shadow_supervisor(
+                            code, f"Code execution stdout: {stdout}; Error: {error}"
+                        )
                     )
 
                     # Provide immediate technical feedback on code execution
@@ -336,13 +331,9 @@ class LiveInterviewSessionHandler:
                             "Check your boundary conditions and explain how you would resolve that exception."
                         )
                     elif stdout and "PASS" in stdout:
-                        code_reply = (
-                            "Tests passed. Now walk me through the asymptotic Big-O runtime and memory space complexity of your implementation."
-                        )
+                        code_reply = "Tests passed. Now walk me through the asymptotic Big-O runtime and memory space complexity of your implementation."
                     else:
-                        code_reply = (
-                            "Code update received. Walk me through your design and how this solution handles scale."
-                        )
+                        code_reply = "Code update received. Walk me through your design and how this solution handles scale."
 
                     await self.websocket.send_json(
                         {
