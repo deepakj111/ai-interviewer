@@ -23,7 +23,7 @@ export default function OnboardingPage() {
   const [apiKey, setApiKey] = useState("");
   const [targetRole, setTargetRole] = useState("Senior Machine Learning Engineer");
   const [targetCompany, setTargetCompany] = useState("Google");
-  const [interviewMode, setInterviewMode] = useState("FULL_LOOP");
+  const [interviewMode, setInterviewMode] = useState("SQL_PYTHON_CODING");
   const [jobDescription, setJobDescription] = useState("");
   const [resumeFile, setResumeFile] = useState<File | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -32,12 +32,14 @@ export default function OnboardingPage() {
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       setResumeFile(e.target.files[0]);
+      // If user had default track, unlock and switch to Full Loop
+      setInterviewMode("FULL_LOOP");
     }
   };
 
   const handleRemoveResume = () => {
     setResumeFile(null);
-    if (interviewMode === "RESUME_DEEP_DIVE") {
+    if (interviewMode === "FULL_LOOP" || interviewMode === "RESUME_DEEP_DIVE") {
       setInterviewMode("SQL_PYTHON_CODING");
     }
   };
@@ -45,8 +47,8 @@ export default function OnboardingPage() {
   const handleStartInterview = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
-    if (interviewMode === "RESUME_DEEP_DIVE" && !resumeFile) {
-      setErrorMsg("Please upload a PDF resume to start the Resume Bar-Raiser track, or select another interview track.");
+    if ((interviewMode === "FULL_LOOP" || interviewMode === "RESUME_DEEP_DIVE") && !resumeFile) {
+      setErrorMsg("Please upload a PDF resume for tracks with Resume Probing, or select SQL & Python Coding / ML System Design.");
       setIsLoading(false);
       return;
     }
@@ -96,7 +98,7 @@ export default function OnboardingPage() {
       title: "Full Loop (Complete)",
       desc: "All 5 stages: Intro → Resume Probing → Coding (SQL/Python) → ML System Design → Wrap-Up",
       icon: Layers,
-      requiresResume: false,
+      requiresResume: true,
     },
     {
       id: "RESUME_DEEP_DIVE",
@@ -279,7 +281,7 @@ export default function OnboardingPage() {
               </label>
               {!resumeFile && (
                 <span className="text-[11px] text-amber-400/90 flex items-center gap-1 font-medium">
-                  <Lock className="w-3 h-3" /> Resume track locked without upload
+                  <Lock className="w-3 h-3" /> Resume-based tracks locked without upload
                 </span>
               )}
             </div>

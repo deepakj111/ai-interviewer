@@ -78,3 +78,27 @@ async def test_rubric_evaluator_report_structure():
         assert critique.question_asked
         assert critique.hiring_manager_critique
         assert critique.gold_standard_rewrite
+
+
+@pytest.mark.asyncio
+async def test_rubric_evaluator_abrupt_termination():
+    # Only interviewer greeting, no candidate turns
+    empty_candidate_transcripts = [
+        {"speaker": "interviewer", "stage": "INTRO", "text": "Welcome to the interview."},
+    ]
+
+    report = await evaluate_interview_session(
+        transcripts=empty_candidate_transcripts,
+        target_role="Senior ML Engineer",
+        target_company="Google",
+        api_key=None,
+    )
+
+    assert report is not None
+    assert report.overall_score < 2.0
+    assert "No Hire" in report.recommendation
+    assert "abruptly" in report.summary.lower() or "abruptly" in report.recommendation.lower()
+    assert report.technical_depth.score == 1
+    assert report.code_quality.score == 1
+    assert len(report.question_critiques) >= 1
+

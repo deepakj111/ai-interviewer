@@ -6,11 +6,13 @@ import { Camera, CameraOff, Mic, MicOff, Clock, ShieldCheck } from "lucide-react
 interface CandidateWebcamProps {
   onMuteToggle?: (isMuted: boolean) => void;
   isMicMuted?: boolean;
+  startTime?: string | number | null;
 }
 
 export default function CandidateWebcam({
   onMuteToggle,
   isMicMuted = false,
+  startTime = null,
 }: CandidateWebcamProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -19,13 +21,22 @@ export default function CandidateWebcam({
   const [presenceSeconds, setPresenceSeconds] = useState(0);
   const [hasPermission, setHasPermission] = useState<boolean | null>(null);
 
-  // Presence timer
+  // Persistent presence timer derived from session start timestamp
   useEffect(() => {
-    const timer = setInterval(() => {
-      setPresenceSeconds((prev) => prev + 1);
-    }, 1000);
+    const updateElapsed = () => {
+      if (startTime) {
+        const startMs = typeof startTime === "number" ? startTime : new Date(startTime).getTime();
+        const diff = Math.max(0, Math.floor((Date.now() - startMs) / 1000));
+        setPresenceSeconds(diff);
+      } else {
+        setPresenceSeconds((prev) => prev + 1);
+      }
+    };
+
+    updateElapsed();
+    const timer = setInterval(updateElapsed, 1000);
     return () => clearInterval(timer);
-  }, []);
+  }, [startTime]);
 
   // Format presence timer mm:ss
   const formatTime = (secs: number) => {
@@ -49,6 +60,7 @@ export default function CandidateWebcam({
           streamRef.current = stream;
           if (videoRef.current) {
             videoRef.current.srcObject = stream;
+            videoRef.current.play().catch((e) => console.warn("Video play error:", e));
           }
           setHasPermission(true);
         }
@@ -78,12 +90,22 @@ export default function CandidateWebcam({
     };
   }, [isCameraActive]);
 
+  // Ensure stream stays bound to video ref when permissions or state update
+  useEffect(() => {
+    if (videoRef.current && streamRef.current && isCameraActive && hasPermission) {
+      videoRef.current.srcObject = streamRef.current;
+      videoRef.current.play().catch((err) => {
+        console.warn("Webcam play promise catch:", err);
+      });
+    }
+  }, [hasPermission, isCameraActive]);
+
   const toggleCamera = () => {
     setIsCameraActive((prev) => !prev);
   };
 
   return (
-    <div className="relative rounded-2xl overflow-hidden glass-panel border border-slate-800 bg-slate-900/90 shadow-2xl flex flex-col aspect-video w-full max-w-md mx-auto">
+    <div className="relative rounded-2xl overflow-hidden glass-panel border border-slate-800 bg-slate-900/90 shadow-2xl flex flex-col aspect-video w-full max-w-md mx-auto shrink-0">
       {/* Top Overlay: Presence Timer and Privacy Badge */}
       <div className="absolute top-3 left-3 right-3 z-20 flex items-center justify-between pointer-events-none">
         <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-slate-950/80 backdrop-blur-md border border-slate-800 text-[11px] text-slate-300 font-medium">
@@ -97,29 +119,36 @@ export default function CandidateWebcam({
         </div>
       </div>
 
-      {/* Main Video Tile */}
+      {/* Main Video Tile - Video kept in DOM so srcObject attaches reliably */}
       <div className="relative flex-1 bg-slate-950 flex items-center justify-center overflow-hidden">
-        {isCameraActive && hasPermission ? (
-          <video
-            ref={videoRef}
-            autoPlay
-            playsInline
-            muted
-            className="w-full h-full object-cover transform -scale-x-100" // Mirror self-view like Zoom
-          />
-        ) : (
+        <video
+          ref={videoRef}
+          autoPlay
+          playsInline
+          muted
+          onLoadedMetadata={() => {
+            videoRef.current?.play().catch(() => {});
+          }}
+          className={`w-full h-full object-cover transform -scale-x-100 ${
+            isCameraActive && hasPermission ? "block" : "hidden"
+          }`}
+        />
+
+        {(!isCameraActive || !hasPermission) && (
           <div className="flex flex-col items-center justify-center text-slate-500 p-6 text-center">
-            <CameraOff className="w-12 h-12 mb-2 text-slate-600" />
+            <CameraOff className="w-10 h-10 mb-2 text-slate-600" />
             <p className="text-xs font-medium">Camera is disabled</p>
             <p className="text-[10px] text-slate-600 mt-1">
-              Desensitization self-view is turned off
+              {hasPermission === false
+                ? "Camera permission denied or camera in use by another application."
+                : "Desensitization self-view is turned off"}
             </p>
           </div>
         )}
       </div>
 
       {/* Bottom Controls Bar */}
-      <div className="p-3 bg-slate-900/95 border-t border-slate-800 flex items-center justify-between z-20">
+      <div className="p-2.5 bg-slate-900/95 border-t border-slate-800 flex items-center justify-between z-20">
         <span className="text-xs font-medium text-slate-300 pl-1">You (Candidate)</span>
 
         <div className="flex items-center gap-2">
@@ -134,7 +163,7 @@ export default function CandidateWebcam({
             }`}
             title={isMicMuted ? "Unmute Microphone" : "Mute Microphone"}
           >
-            {isMicMuted ? <MicOff className="w-4 h-4 text-rose-400" /> : <Mic className="w-4 h-4 text-emerald-400" />}
+            {isMicMuted ? <MicOff className="w-3.5 h-3.5 text-rose-400" /> : <Mic className="w-3.5 h-3.5 text-emerald-400" />}
           </button>
 
           {/* Camera Toggle */}
@@ -148,7 +177,7 @@ export default function CandidateWebcam({
             }`}
             title={isCameraActive ? "Turn Off Camera" : "Turn On Camera"}
           >
-            {isCameraActive ? <Camera className="w-4 h-4 text-blue-400" /> : <CameraOff className="w-4 h-4 text-amber-400" />}
+            {isCameraActive ? <Camera className="w-3.5 h-3.5 text-blue-400" /> : <CameraOff className="w-3.5 h-3.5 text-amber-400" />}
           </button>
         </div>
       </div>

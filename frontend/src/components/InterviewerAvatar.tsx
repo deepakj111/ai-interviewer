@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { Mic, Volume2 } from "lucide-react";
+import { Sparkles, Volume2, Mic } from "lucide-react";
 
 interface InterviewerAvatarProps {
   isSpeaking: boolean;
@@ -15,15 +15,15 @@ export default function InterviewerAvatar({
   isSpeaking,
   frequencyLevel,
   interviewerName = "Dr. Elena Vance",
-  roleTitle = "Principal Bar-Raiser",
+  roleTitle = "Staff Bar-Raiser",
   currentStage = "INTRO",
 }: InterviewerAvatarProps) {
-  // Normalize frequency for glow intensity (0.2 to 1.0)
-  const [glowIntensity, setGlowIntensity] = useState(0.2);
+  // Normalize frequency for glow intensity (0.15 to 1.0)
+  const [glowIntensity, setGlowIntensity] = useState(0.15);
 
   useEffect(() => {
     if (isSpeaking) {
-      const normalized = Math.min(1.0, Math.max(0.3, frequencyLevel / 120));
+      const normalized = Math.min(1.0, Math.max(0.3, frequencyLevel / 100));
       setGlowIntensity(normalized);
     } else {
       setGlowIntensity(0.15);
@@ -31,25 +31,38 @@ export default function InterviewerAvatar({
   }, [isSpeaking, frequencyLevel]);
 
   return (
-    <div className="relative flex flex-col items-center justify-center p-6 rounded-2xl glass-panel border border-slate-800 bg-slate-900/80 shadow-2xl overflow-hidden">
+    <div className="relative flex flex-col items-center justify-between p-4 rounded-2xl glass-panel border border-slate-800 bg-slate-900/90 shadow-2xl overflow-hidden shrink-0 w-full max-w-md mx-auto aspect-[16/10]">
       {/* Background radial gradient reacting to voice */}
       <div
         className="absolute inset-0 transition-opacity duration-300 pointer-events-none"
         style={{
-          background: `radial-gradient(circle at center, rgba(59, 130, 246, ${glowIntensity * 0.35}) 0%, transparent 70%)`,
+          background: `radial-gradient(circle at center, rgba(59, 130, 246, ${glowIntensity * 0.35}) 0%, transparent 75%)`,
         }}
       />
 
-      {/* Glowing Pulsing Ring Container */}
-      <div className="relative mb-5 flex items-center justify-center">
+      {/* Top Bar inside Interviewer Tile */}
+      <div className="w-full flex items-center justify-between z-10">
+        <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-slate-950/80 backdrop-blur-md border border-slate-800 text-[11px] text-slate-300 font-medium">
+          <Sparkles className="w-3.5 h-3.5 text-blue-400" />
+          <span>{interviewerName}</span>
+        </div>
+
+        <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-blue-950/80 backdrop-blur-md border border-blue-800/50 text-[10px] text-blue-300 font-semibold uppercase tracking-wider">
+          <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-ping" />
+          <span>{currentStage.replace(/_/g, " ")}</span>
+        </div>
+      </div>
+
+      {/* Glowing Pulsing Ring & Avatar Canvas */}
+      <div className="relative my-auto flex items-center justify-center">
         {/* Dynamic aura rings */}
         <div
           className="absolute rounded-full transition-all duration-150"
           style={{
-            width: `${128 + glowIntensity * 32}px`,
-            height: `${128 + glowIntensity * 32}px`,
+            width: `${90 + glowIntensity * 28}px`,
+            height: `${90 + glowIntensity * 28}px`,
             backgroundColor: "rgba(59, 130, 246, 0.2)",
-            filter: "blur(14px)",
+            filter: "blur(12px)",
             transform: `scale(${1 + glowIntensity * 0.2})`,
           }}
         />
@@ -57,50 +70,42 @@ export default function InterviewerAvatar({
         <div
           className="absolute rounded-full transition-all duration-100"
           style={{
-            width: "128px",
-            height: "128px",
+            width: "90px",
+            height: "90px",
             boxShadow: isSpeaking
-              ? `0 0 ${20 + glowIntensity * 35}px rgba(99, 102, 241, ${0.6 + glowIntensity * 0.4})`
+              ? `0 0 ${16 + glowIntensity * 25}px rgba(99, 102, 241, ${0.7 + glowIntensity * 0.3})`
               : "0 0 10px rgba(71, 85, 105, 0.3)",
             border: isSpeaking
               ? "3px solid rgb(96, 165, 250)"
-              : "3px solid rgb(71, 85, 105)",
+              : "2px solid rgb(71, 85, 105)",
           }}
         />
 
         {/* 2D Portrait / Avatar Canvas */}
-        <div className="relative w-32 h-32 rounded-full overflow-hidden bg-gradient-to-tr from-slate-950 via-slate-800 to-indigo-950 flex items-center justify-center z-10 border border-slate-700/50">
-          {/* Stylized vector SVG avatar */}
+        <div className="relative w-20 h-20 rounded-full overflow-hidden bg-gradient-to-tr from-slate-950 via-slate-800 to-indigo-950 flex items-center justify-center z-10 border border-slate-700/60 shadow-inner">
           <svg
-            className="w-24 h-24 text-slate-300 mt-3"
+            className="w-16 h-16 text-slate-300 mt-2"
             fill="currentColor"
             viewBox="0 0 24 24"
           >
             <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z" />
           </svg>
 
-          {/* Real-time speaking wave badge */}
+          {/* Real-time speaking status pill */}
           {isSpeaking && (
-            <div className="absolute bottom-2 px-2 py-0.5 rounded-full bg-blue-600/90 text-white text-[10px] font-semibold flex items-center gap-1 shadow-md animate-pulse">
-              <Volume2 className="w-3 h-3" /> Speaking
+            <div className="absolute bottom-1 px-1.5 py-0.5 rounded-full bg-blue-600/95 text-white text-[9px] font-bold flex items-center gap-1 shadow-md animate-pulse">
+              <Volume2 className="w-2.5 h-2.5" /> Speaking
             </div>
           )}
         </div>
       </div>
 
-      {/* Identity & Status */}
-      <div className="text-center z-10">
-        <h3 className="text-lg font-semibold text-slate-100 flex items-center justify-center gap-2">
-          {interviewerName}
-        </h3>
-        <p className="text-xs text-blue-400 font-medium tracking-wide uppercase mt-0.5">
-          {roleTitle}
-        </p>
-
-        {/* Stage tag */}
-        <div className="mt-3 inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-800/80 border border-slate-700 text-xs text-slate-300">
-          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
-          <span>Stage: {currentStage.replace(/_/g, " ")}</span>
+      {/* Bottom Bar inside Interviewer Tile */}
+      <div className="w-full flex items-center justify-between text-xs text-slate-400 z-10 pt-1 border-t border-slate-800/60">
+        <span className="font-semibold text-slate-300 text-[11px]">{roleTitle}</span>
+        <div className="flex items-center gap-1 text-[10px] text-slate-400">
+          <Mic className={`w-3 h-3 ${isSpeaking ? "text-blue-400 animate-pulse" : "text-slate-500"}`} />
+          <span>{isSpeaking ? "Voice Active" : "Listening"}</span>
         </div>
       </div>
     </div>
