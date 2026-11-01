@@ -214,10 +214,10 @@ export GEMINI_API_KEY="your-gemini-api-key"
 docker compose up --build
 ```
 
-- Frontend: `http://localhost:3000`
+- Frontend: `http://localhost:3001` (or `http://localhost:3000` via `FRONTEND_PORT=3000`)
 - Backend API: `http://localhost:8000`
 
-> **Note on Port Conflicts:** If port 3000 is already in use by a running local development server (`Bind for 0.0.0.0:3000 failed`), either stop the process using `kill $(lsof -t -i:3000)` or change the host port in `docker-compose.yml` (e.g., `"3001:3000"`).
+> **Note on Port Allocation:** The Docker frontend defaults to port `3001` (`3001:3000`) to avoid collisions with other host services (like Grafana). You can customize it by setting `FRONTEND_PORT=3000` if port 3000 is free.
 
 ---
 
