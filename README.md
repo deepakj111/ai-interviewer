@@ -135,6 +135,40 @@ ai-interviewer/
     - If you authenticated using `gcloud auth application-default login`, the unified `google-genai` SDK can communicate with Vertex AI.
     - Note that Vertex AI requires an active Google Cloud project with billing and the Vertex AI API (`aiplatform.googleapis.com`) enabled. The live bidirectional voice WebSocket stream is natively supported out of the box via Google AI Studio keys.
 
+### 💰 API Pricing, Rate Limits & Costs (2026 Reference)
+
+The platform supports both **100% Free** usage and **Pay-As-You-Go** tiers:
+
+#### 1. Free Tier (Google AI Studio) — $0 Cost
+- **Cost**: **$0.00** (no credit card or billing account required).
+- **Available Models**: Gemini 2.5 Flash, Gemini 2.0 Flash, Gemini 1.5 Flash.
+- **Quotas & Rate Limits**:
+  - **15 RPM** (Requests Per Minute)
+  - **1,000,000 TPM** (Tokens Per Minute)
+  - **1,500 RPD** (Requests Per Day — resets daily at midnight PT)
+- **Data Policy Note**: On the free tier, Google may log inputs/outputs to train and improve models. (For 100% private zero-logging, see Pay-As-You-Go below).
+- **Adequacy**: 1,500 requests per day is more than enough to conduct **5 to 10 full 45-minute technical interviews daily completely free of charge**.
+
+#### 2. Pay-As-You-Go Tier (Google AI Studio / Vertex AI)
+If you link a billing account or use enterprise GCP credentials:
+- **Zero Training Guarantee**: Inputs and outputs are strictly private and **never** used for model training.
+- **Model Token Pricing**:
+  | Modality / Model | Input Cost | Output Cost | Approx. Real-Time Cost |
+  | :--- | :--- | :--- | :--- |
+  | **Gemini Flash (Text/Code)** | $0.075 / 1M tokens | $0.30 / 1M tokens | — |
+  | **Gemini Pro (BARS Grader)** | $1.25 / 1M tokens | $5.00 / 1M tokens | — |
+  | **Multimodal Live Audio (Flash)** | $3.00 / 1M tokens | $12.00 / 1M tokens | ~$0.005 / min (in) <br> ~$0.018 / min (out) |
+
+- **Real-World Session Cost**:
+  - Live 25-minute voice interaction (~25 tokens/sec audio): **~$0.18 – $0.35**
+  - Full BARS rubric evaluation report (Gemini Pro reasoning): **~$0.04 – $0.08**
+  - **Total estimated cost per complete mock interview: ~$0.25 to $0.45.**
+
+#### 3. Zero-Key Local Mode — $0 Cost & 100% Private
+- If no API key is provided, the platform automatically switches to **local simulation mode**.
+- Uses client-side WebAssembly (DuckDB-WASM + Pyodide) and local PyMuPDF extraction.
+- **Cost: Exactly $0.00 forever**, with zero network calls and complete offline privacy.
+
 ---
 
 ### Method A: Local Development
@@ -182,6 +216,8 @@ docker compose up --build
 
 - Frontend: `http://localhost:3000`
 - Backend API: `http://localhost:8000`
+
+> **Note on Port Conflicts:** If port 3000 is already in use by a running local development server (`Bind for 0.0.0.0:3000 failed`), either stop the process using `kill $(lsof -t -i:3000)` or change the host port in `docker-compose.yml` (e.g., `"3001:3000"`).
 
 ---
 
