@@ -45,3 +45,10 @@ yarn-error.log*
 *.njsproj
 *.sln
 *.sw?
+
+# Local specifications & databases
+goal.txt
+*.db
+*.sqlite
+*.sqlite3
+uploads/
