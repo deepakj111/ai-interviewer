@@ -46,7 +46,7 @@ def test_fsm_transition_and_vad_gate():
     # Transition to next stage
     new_stage, announcement = fsm.transition_next()
     assert new_stage == InterviewStage.RESUME_DEEP_DIVE
-    assert "RESUME_DEEP_DIVE" in announcement
+    assert "Resume Deep-Dive" in announcement or "RESUME_DEEP_DIVE" in announcement
     assert fsm.stage_start_elapsed == 0
 
 

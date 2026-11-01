@@ -14,6 +14,7 @@ from app.database import AsyncSessionLocal, InterviewSessionModel, TranscriptTur
 from app.prompts.interviewer_system import build_interviewer_session_prompt
 from app.schemas import CandidateClaimGraph, InterviewMode, InterviewStage
 from app.services.fsm_orchestrator import InterviewFSM
+from app.services.interviewer_engine import InterviewerEngine
 from app.services.question_bank import get_question_by_id
 from app.services.shadow_supervisor import evaluate_turn_in_shadow
 
@@ -37,6 +38,8 @@ class LiveInterviewSessionHandler:
         self.session_record: InterviewSessionModel | None = None
         self.claim_graph: CandidateClaimGraph | None = None
         self.gemini_session = None
+        self.engine: InterviewerEngine | None = None
+        self.conversation_history: list[dict[str, str]] = []
 
     async def initialize(self) -> None:
         """Load session metadata from SQLite and initialize FSM."""
@@ -60,12 +63,24 @@ class LiveInterviewSessionHandler:
                 except Exception as exc:
                     logger.warning("Could not parse claim graph: %s", exc)
 
+            if getattr(session, "api_key", None) and not self.api_key:
+                self.api_key = session.api_key
+
+            self.engine = InterviewerEngine(
+                session_id=self.session_id,
+                target_role=session.target_role or "Senior ML Engineer",
+                target_company=session.target_company or "Top Tech",
+                claim_graph=self.claim_graph,
+                api_key=self.api_key,
+            )
+
     async def _save_transcript_turn(
         self, speaker: str, text: str, code_snapshot: str | None = None
     ) -> None:
-        """Persist transcript turn to local SQLite."""
+        """Persist transcript turn to local SQLite and memory history."""
+        stage_val = self.fsm.current_stage.value if self.fsm else "INTRO"
+        self.conversation_history.append({"speaker": speaker, "text": text, "stage": stage_val})
         async with AsyncSessionLocal() as db:
-            stage_val = self.fsm.current_stage.value if self.fsm else "INTRO"
             turn = TranscriptTurnModel(
                 session_id=self.session_id,
                 stage=stage_val,
@@ -253,12 +268,19 @@ class LiveInterviewSessionHandler:
                     logger.warning("Could not inject directive to Gemini Live: %s", exc)
 
     async def _run_local_simulated_loop(self) -> None:
-        """Local-first fallback loop for testing, zero-cost development, or offline mode."""
+        """Smart conversational loop delivering dynamic AI responses, question explanations, and code feedback."""
         try:
-            # Send initial greeting caption
+            active_q = (
+                get_question_by_id(self.fsm.active_question_id)
+                if self.fsm and self.fsm.active_question_id
+                else None
+            )
+            # Send initial stage greeting with verbal introduction
+            current_stg = self.fsm.current_stage if self.fsm else InterviewStage.INTRO
             greeting = (
-                f"Hello. Welcome to the technical interview for {self.session_record.target_role}. "
-                "Let's begin with a 60-second summary of your background and production ML experience."
+                self.engine.generate_stage_greeting(current_stg, active_q)
+                if self.engine
+                else f"Welcome to the technical interview for {self.session_record.target_role}."
             )
             await self.websocket.send_json(
                 {
@@ -280,24 +302,25 @@ class LiveInterviewSessionHandler:
                     user_text = msg.get("text", "")
                     await self._save_transcript_turn("candidate", user_text)
 
-                    # Trigger shadow assessment
+                    # Trigger shadow assessment in background
                     asyncio.create_task(self._trigger_shadow_supervisor(None, user_text))
 
-                    # Generate stage-aware response
-                    current_stage = self.fsm.current_stage.value if self.fsm else "INTRO"
-                    if current_stage == "INTRO":
-                        reply = (
-                            f"Thank you for that background summary. Let's move directly into our technical challenge for {self.session_record.target_role}. "
-                            "Please review the problem statement in your technical workbench and walk me through your initial approach before writing code."
+                    active_q = (
+                        get_question_by_id(self.fsm.active_question_id)
+                        if self.fsm and self.fsm.active_question_id
+                        else None
+                    )
+                    current_stg = self.fsm.current_stage if self.fsm else InterviewStage.INTRO
+
+                    if self.engine:
+                        reply = await self.engine.generate_turn_response(
+                            user_text=user_text,
+                            stage=current_stg,
+                            active_question=active_q,
+                            conversation_history=self.conversation_history,
                         )
-                    elif current_stage == "LIVE_CODING_SQL_PYTHON":
-                        reply = "Good framing. What are the key edge cases (e.g. empty inputs, duplicate keys) and how does your approach achieve optimal Big-O time and space complexity?"
-                    elif current_stage == "ML_SYSTEM_DESIGN":
-                        reply = "Understood. How would your architecture handle downstream feature store degradation if p99 latency spikes during peak 50,000 QPS load?"
-                    elif current_stage == "RESUME_DEEP_DIVE":
-                        reply = "How did you prevent temporal data leakage between your training features and inference pipeline, and what was your label delay window?"
                     else:
-                        reply = "Understood. Let's discuss the production trade-offs and monitoring metrics for this implementation."
+                        reply = "Understood. Please walk me through your technical reasoning."
 
                     await self.websocket.send_json(
                         {
@@ -310,11 +333,12 @@ class LiveInterviewSessionHandler:
 
                 elif msg_type == "code_update":
                     code = msg.get("code", "")
+                    lang = msg.get("language", "python")
                     stdout = msg.get("stdout", "")
                     error = msg.get("error")
                     await self._save_transcript_turn(
                         "candidate",
-                        f"[Code Update]:\n{code}\n[Stdout]: {stdout}"
+                        f"[Code Update ({lang})]:\n{code}\n[Stdout]: {stdout}"
                         + (f"\n[Error]: {error}" if error else ""),
                         code_snapshot=code,
                     )
@@ -324,14 +348,19 @@ class LiveInterviewSessionHandler:
                         )
                     )
 
-                    # Provide immediate technical feedback on code execution
-                    if error:
-                        code_reply = (
-                            f"I noticed a runtime error during execution: '{error[:120]}'. "
-                            "Check your boundary conditions and explain how you would resolve that exception."
+                    active_q = (
+                        get_question_by_id(self.fsm.active_question_id)
+                        if self.fsm and self.fsm.active_question_id
+                        else None
+                    )
+                    if self.engine:
+                        code_reply = self.engine.generate_code_feedback(
+                            code=code,
+                            language=lang,
+                            stdout=stdout,
+                            error=error,
+                            active_question=active_q,
                         )
-                    elif stdout and "PASS" in stdout:
-                        code_reply = "Tests passed. Now walk me through the asymptotic Big-O runtime and memory space complexity of your implementation."
                     else:
                         code_reply = "Code update received. Walk me through your design and how this solution handles scale."
 

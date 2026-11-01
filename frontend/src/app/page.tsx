@@ -15,12 +15,17 @@ import {
   Lock,
   X,
   UploadCloud,
+  Radio,
+  UserCheck,
 } from "lucide-react";
+import { INTERVIEWER_PERSONAS, voiceManager } from "@/lib/voiceManager";
 
 export default function OnboardingPage() {
   const router = useRouter();
 
   const [apiKey, setApiKey] = useState("");
+  const [selectedPersonaId, setSelectedPersonaId] = useState("elena");
+  const [isTestingVoice, setIsTestingVoice] = useState(false);
   const [targetRole, setTargetRole] = useState("Senior Machine Learning Engineer");
   const [targetCompany, setTargetCompany] = useState("Google");
   const [interviewMode, setInterviewMode] = useState("SQL_PYTHON_CODING");
@@ -339,6 +344,74 @@ export default function OnboardingPage() {
                     <p className={`text-xs pl-1 leading-relaxed ${isDisabled ? "text-slate-500" : "text-slate-400"}`}>
                       {m.desc}
                     </p>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Section 5: Interviewer Persona & Voice Selector */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between pl-1">
+              <label className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
+                <UserCheck className="w-4 h-4 text-blue-400" /> Choose Interviewer Persona & Voice
+              </label>
+              <span className="text-[10px] text-slate-500 font-medium">
+                Deterministic voice lock across all stages
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              {INTERVIEWER_PERSONAS.map((p) => {
+                const isSelected = selectedPersonaId === p.id;
+                return (
+                  <div
+                    key={p.id}
+                    onClick={() => {
+                      setSelectedPersonaId(p.id);
+                      voiceManager.setPersona(p.id);
+                    }}
+                    className={`p-4 rounded-2xl transition-all border relative flex flex-col justify-between cursor-pointer ${
+                      isSelected
+                        ? "bg-blue-600/10 border-blue-500 shadow-lg shadow-blue-500/10"
+                        : "bg-slate-900/50 border-slate-800 hover:border-slate-700"
+                    }`}
+                  >
+                    <div>
+                      <div className="flex items-center justify-between mb-1.5">
+                        <span className="text-xs font-bold text-white">{p.name}</span>
+                        {isSelected ? (
+                          <CheckCircle className="w-4 h-4 text-blue-400" />
+                        ) : null}
+                      </div>
+                      <span className="text-[10px] font-semibold text-blue-400 block mb-2">
+                        {p.title}
+                      </span>
+                      <p className="text-[11px] text-slate-400 leading-relaxed">
+                        {p.description}
+                      </p>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setIsTestingVoice(true);
+                        voiceManager.setPersona(p.id);
+                        setSelectedPersonaId(p.id);
+                        voiceManager.speak(
+                          `Hello, I am ${p.name}. I look forward to conducting your technical interview today.`,
+                          {
+                            onEnd: () => setIsTestingVoice(false),
+                          }
+                        );
+                      }}
+                      disabled={isTestingVoice}
+                      className="mt-3 py-1.5 px-3 rounded-lg bg-slate-950 hover:bg-slate-800 border border-slate-800 text-[10px] text-slate-300 font-medium flex items-center justify-center gap-1.5 transition-colors"
+                    >
+                      <Radio className="w-3 h-3 text-blue-400" />
+                      <span>{isTestingVoice && isSelected ? "Speaking..." : "Preview Voice"}</span>
+                    </button>
                   </div>
                 );
               })}

@@ -129,6 +129,7 @@ async def init_session(
         status="IN_PROGRESS",
         fsm_state=fsm.current_stage.value,
         active_question_id=fsm.active_question_id,
+        api_key=api_key.strip() if api_key and api_key.strip() else None,
     )
     db.add(session_record)
     await db.commit()
@@ -265,11 +266,12 @@ async def evaluate_session(
         for turn in turns
     ]
 
+    effective_key = api_key or session.api_key
     report = await evaluate_interview_session(
         transcripts=transcript_dicts,
         target_role=session.target_role,
         target_company=session.target_company,
-        api_key=api_key,
+        api_key=effective_key,
     )
 
     # Upsert evaluation report in SQLite

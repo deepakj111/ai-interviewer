@@ -15,14 +15,18 @@ import {
   Layers,
   Pause,
   Send,
-  Mic,
   MessageSquare,
+  HelpCircle,
+  Lightbulb,
+  Radio,
+  UserCheck,
 } from "lucide-react";
 import InterviewerAvatar from "@/components/InterviewerAvatar";
 import CandidateWebcam from "@/components/CandidateWebcam";
 import CodeSandbox from "@/components/CodeSandbox";
 import SystemDesignCanvas from "@/components/SystemDesignCanvas";
 import { AudioPlayerQueue, AudioRecorder } from "@/lib/audioStream";
+import { INTERVIEWER_PERSONAS, InterviewerPersona, voiceManager } from "@/lib/voiceManager";
 
 export default function InterviewRoomPage() {
   const params = useParams();
@@ -36,6 +40,10 @@ export default function InterviewRoomPage() {
   const [transcripts, setTranscripts] = useState<Array<{ speaker: string; text: string }>>([]);
   const [latestCaption, setLatestCaption] = useState<string>("");
   const [candidateInputText, setCandidateInputText] = useState("");
+
+  // Persona & Voice State
+  const [selectedPersona, setSelectedPersona] = useState<InterviewerPersona>(voiceManager.getPersona());
+  const [isTestingVoice, setIsTestingVoice] = useState(false);
 
   // Persistent Timer
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
@@ -53,6 +61,12 @@ export default function InterviewRoomPage() {
   const animFrameRef = useRef<number | null>(null);
   const hasLiveAudioRef = useRef(false);
   const speechRecRef = useRef<any>(null);
+  const transcriptEndRef = useRef<HTMLDivElement | null>(null);
+
+  // Auto-scroll transcript feed
+  useEffect(() => {
+    transcriptEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [transcripts]);
 
   // Load session details and establish persistent session start time
   useEffect(() => {
@@ -88,7 +102,7 @@ export default function InterviewRoomPage() {
     }
   }, [sessionId]);
 
-  // Persistent Timer Interval - Derives elapsed seconds from persistent start time
+  // Persistent Timer Interval
   useEffect(() => {
     const updateTimer = () => {
       const storageKey = `session_start_${sessionId}`;
@@ -121,59 +135,50 @@ export default function InterviewRoomPage() {
     return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
   };
 
-  // Browser SpeechSynthesis TTS Voice for Interviewer
+  // Deterministic Persona-Locked Speech Synthesis
   const speakInterviewerCaption = useCallback(
     (text: string) => {
-      if (!isTtsEnabled || typeof window === "undefined" || !("speechSynthesis" in window)) return;
+      if (!isTtsEnabled) return;
       if (hasLiveAudioRef.current) return; // Use Gemini Live PCM stream if actively delivering audio
 
-      try {
-        window.speechSynthesis.cancel();
-        const clean = text.replace(/[*_#`[\]]/g, "").trim();
-        if (!clean) return;
-
-        const utterance = new SpeechSynthesisUtterance(clean);
-        utterance.rate = 1.0;
-        utterance.pitch = 1.0;
-
-        // Select natural English voice
-        const voices = window.speechSynthesis.getVoices();
-        const preferred = voices.find(
-          (v) =>
-            v.lang.startsWith("en") &&
-            (v.name.includes("Google") ||
-              v.name.includes("Natural") ||
-              v.name.includes("Samantha") ||
-              v.name.includes("Daniel") ||
-              v.name.includes("Arthur"))
-        ) || voices.find((v) => v.lang.startsWith("en"));
-
-        if (preferred) {
-          utterance.voice = preferred;
-        }
-
-        utterance.onstart = () => {
+      voiceManager.speak(text, {
+        onStart: () => {
           setIsSpeaking(true);
-          setFrequencyLevel(70);
-        };
-
-        utterance.onend = () => {
+        },
+        onEnd: () => {
           setIsSpeaking(false);
           setFrequencyLevel(0);
-        };
-
-        utterance.onerror = () => {
-          setIsSpeaking(false);
-          setFrequencyLevel(0);
-        };
-
-        window.speechSynthesis.speak(utterance);
-      } catch (e) {
-        console.warn("TTS synthesis error:", e);
-      }
+        },
+        onFrequency: (freq) => {
+          setFrequencyLevel(freq);
+        },
+      });
     },
     [isTtsEnabled]
   );
+
+  const handlePersonaChange = (personaId: string) => {
+    voiceManager.setPersona(personaId);
+    const newPersona = voiceManager.getPersona();
+    setSelectedPersona(newPersona);
+  };
+
+  const handleTestVoice = () => {
+    if (isTestingVoice) return;
+    setIsTestingVoice(true);
+    voiceManager.speak(
+      `Hello, I am ${selectedPersona.name}. I am ready to begin your technical interview for ${sessionData?.target_role || "Senior ML Engineer"}.`,
+      {
+        onStart: () => setIsSpeaking(true),
+        onEnd: () => {
+          setIsSpeaking(false);
+          setIsTestingVoice(false);
+          setFrequencyLevel(0);
+        },
+        onFrequency: (freq) => setFrequencyLevel(freq),
+      }
+    );
+  };
 
   // Browser SpeechRecognition for Candidate Microphone
   useEffect(() => {
@@ -207,7 +212,7 @@ export default function InterviewRoomPage() {
 
         recognition.onerror = (e: any) => {
           if (e.error !== "no-speech") {
-            console.warn("Speech recognition error:", e.error);
+            console.warn("Speech recognition warning:", e.error);
           }
         };
 
@@ -294,18 +299,16 @@ export default function InterviewRoomPage() {
       ws.close();
       audioRecorder.stop();
       audioPlayer.stop();
-      if (typeof window !== "undefined" && "speechSynthesis" in window) {
-        window.speechSynthesis.cancel();
-      }
+      voiceManager.cancel();
       if (animFrameRef.current) {
         cancelAnimationFrame(animFrameRef.current);
       }
     };
   }, [sessionId, isMicMuted, speakInterviewerCaption]);
 
-  // Manual Candidate Text Response Submission
-  const handleSendCandidateText = (e: React.FormEvent) => {
-    e.preventDefault();
+  // Candidate Text or Direct Prompt Submission
+  const handleSendCandidateText = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
     const text = candidateInputText.trim();
     if (!text) return;
 
@@ -318,6 +321,19 @@ export default function InterviewRoomPage() {
       );
       setTranscripts((prev) => [...prev, { speaker: "candidate", text: text }]);
       setCandidateInputText("");
+    }
+  };
+
+  const handleSendDirectPrompt = (prompt: string) => {
+    if (!prompt.trim()) return;
+    if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+      socketRef.current.send(
+        JSON.stringify({
+          type: "text_turn",
+          text: prompt,
+        })
+      );
+      setTranscripts((prev) => [...prev, { speaker: "candidate", text: prompt }]);
     }
   };
 
@@ -377,6 +393,7 @@ export default function InterviewRoomPage() {
   };
 
   const handleEndInterview = () => {
+    voiceManager.cancel();
     router.push(`/report/${sessionId}`);
   };
 
@@ -415,21 +432,49 @@ export default function InterviewRoomPage() {
           {isCandidateWorking && (
             <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs animate-pulse">
               <Pause className="w-3 h-3" />
-              <span>Thinking / Typing Hold Active</span>
+              <span>Thinking / Typing Hold</span>
             </div>
           )}
         </div>
 
         {/* Action Controls */}
-        <div className="flex items-center gap-2.5">
+        <div className="flex items-center gap-2">
+          {/* Persona Selector Dropdown */}
+          <div className="flex items-center bg-slate-900 border border-slate-800 rounded-xl px-2 py-1 text-xs">
+            <UserCheck className="w-3.5 h-3.5 text-blue-400 mr-1.5" />
+            <select
+              value={selectedPersona.id}
+              onChange={(e) => handlePersonaChange(e.target.value)}
+              className="bg-transparent text-slate-200 text-xs outline-none cursor-pointer pr-1"
+            >
+              {INTERVIEWER_PERSONAS.map((p) => (
+                <option key={p.id} value={p.id} className="bg-slate-900 text-slate-200">
+                  {p.name} ({p.gender})
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Test Voice Button */}
+          <button
+            type="button"
+            onClick={handleTestVoice}
+            disabled={isTestingVoice}
+            className="px-2.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 text-xs font-medium flex items-center gap-1.5 transition-colors"
+            title="Preview interviewer voice"
+          >
+            <Radio className={`w-3.5 h-3.5 text-blue-400 ${isTestingVoice ? "animate-spin" : ""}`} />
+            <span>{isTestingVoice ? "Testing..." : "Test Voice"}</span>
+          </button>
+
           {/* TTS Audio Voice Toggle */}
           <button
             type="button"
             onClick={() => {
               const next = !isTtsEnabled;
               setIsTtsEnabled(next);
-              if (!next && typeof window !== "undefined" && "speechSynthesis" in window) {
-                window.speechSynthesis.cancel();
+              if (!next) {
+                voiceManager.cancel();
               } else if (next && latestCaption) {
                 speakInterviewerCaption(latestCaption);
               }
@@ -467,11 +512,14 @@ export default function InterviewRoomPage() {
       <div className="flex-1 flex overflow-hidden">
         {/* Left Pane (38% width - The Interview Room) */}
         <div className="w-[38%] border-r border-slate-800/80 bg-slate-950 flex flex-col p-3 gap-3 overflow-y-auto">
-          {/* AI Interviewer Avatar Tile */}
+          {/* AI Interviewer Avatar Tile with Dynamic Persona */}
           <InterviewerAvatar
             isSpeaking={isSpeaking}
             frequencyLevel={frequencyLevel}
+            persona={selectedPersona}
+            targetCompany={sessionData?.target_company}
             currentStage={fsmSnapshot?.current_stage || "INTRO"}
+            isCandidateWorking={isCandidateWorking}
           />
 
           {/* Candidate Webcam Tile with Persistent Presence Timer */}
@@ -482,39 +530,86 @@ export default function InterviewRoomPage() {
           />
 
           {/* Live Transcript / Subtitles & Verbal Response Bar */}
-          <div className="flex-1 min-h-[160px] rounded-2xl glass-panel border border-slate-800 bg-slate-900/70 p-3.5 flex flex-col justify-between">
-            <div className="overflow-y-auto max-h-[140px] pr-1">
-              <div className="flex items-center justify-between mb-1.5">
+          <div className="flex-1 min-h-[220px] rounded-2xl glass-panel border border-slate-800 bg-slate-900/70 p-3.5 flex flex-col justify-between overflow-hidden">
+            <div className="overflow-y-auto flex-1 pr-1 space-y-2.5 max-h-[180px]">
+              <div className="flex items-center justify-between sticky top-0 bg-slate-900/90 backdrop-blur pb-1 z-10 border-b border-slate-800/60">
                 <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                  Live Subtitles & Probing Stream
+                  Live Interview Dialogue Stream
                 </span>
                 <span className="text-[10px] text-emerald-400 font-medium flex items-center gap-1">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" /> Live Room
                 </span>
               </div>
-              <p className="text-xs text-slate-200 leading-relaxed italic bg-slate-950/40 p-2 rounded-xl border border-slate-800/60">
-                {latestCaption ? `"${latestCaption}"` : "Waiting for interviewer to speak..."}
-              </p>
+
+              {transcripts.length === 0 ? (
+                <p className="text-xs text-slate-500 italic p-2">
+                  Waiting for interview session to begin...
+                </p>
+              ) : (
+                transcripts.map((turn, idx) => (
+                  <div
+                    key={idx}
+                    className={`p-2.5 rounded-xl text-xs leading-relaxed ${
+                      turn.speaker === "interviewer"
+                        ? "bg-blue-950/40 border border-blue-800/40 text-blue-100"
+                        : "bg-slate-950 border border-slate-800 text-slate-200 ml-3"
+                    }`}
+                  >
+                    <span className="text-[10px] font-bold uppercase tracking-wider block mb-0.5 text-blue-400">
+                      {turn.speaker === "interviewer" ? selectedPersona.name : "You (Candidate)"}
+                    </span>
+                    <p className="whitespace-pre-wrap">{turn.text}</p>
+                  </div>
+                ))
+              )}
+              <div ref={transcriptEndRef} />
             </div>
 
-            {/* Candidate Response Input Bar (Spoken or Typed) */}
-            <form onSubmit={handleSendCandidateText} className="pt-2 border-t border-slate-800/60 flex items-center gap-2">
-              <input
-                type="text"
-                value={candidateInputText}
-                onChange={(e) => setCandidateInputText(e.target.value)}
-                placeholder="Speak into microphone or type your answer..."
-                className="flex-1 bg-slate-950 border border-slate-800 focus:border-blue-500 rounded-xl px-3 py-1.5 text-xs text-slate-200 placeholder-slate-500 outline-none transition-colors"
-              />
-              <button
-                type="submit"
-                disabled={!candidateInputText.trim()}
-                className="p-2 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-40 disabled:hover:bg-blue-600 text-white transition-colors"
-                title="Send verbal or typed answer to interviewer"
-              >
-                <Send className="w-3.5 h-3.5" />
-              </button>
-            </form>
+            {/* Quick Action Suggestion Chips for Candidate */}
+            <div className="pt-2 border-t border-slate-800/60 flex flex-col gap-2">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => handleSendDirectPrompt("Can you explain the question and requirements?")}
+                  className="px-2 py-0.5 rounded-md bg-slate-950 hover:bg-slate-800 border border-slate-800 text-[10px] text-slate-400 hover:text-slate-200 transition-colors"
+                >
+                  Explain Question
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSendDirectPrompt("Could you clarify the input constraints and edge cases?")}
+                  className="px-2 py-0.5 rounded-md bg-slate-950 hover:bg-slate-800 border border-slate-800 text-[10px] text-slate-400 hover:text-slate-200 transition-colors"
+                >
+                  Clarify Constraints
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSendDirectPrompt("I'm thinking about the approach, can you give me a hint?")}
+                  className="px-2 py-0.5 rounded-md bg-slate-950 hover:bg-slate-800 border border-slate-800 text-[10px] text-slate-400 hover:text-slate-200 transition-colors"
+                >
+                  Get Hint
+                </button>
+              </div>
+
+              {/* Candidate Response Input Bar (Spoken or Typed) */}
+              <form onSubmit={handleSendCandidateText} className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={candidateInputText}
+                  onChange={(e) => setCandidateInputText(e.target.value)}
+                  placeholder="Speak into microphone or type your answer..."
+                  className="flex-1 bg-slate-950 border border-slate-800 focus:border-blue-500 rounded-xl px-3 py-1.5 text-xs text-slate-200 placeholder-slate-500 outline-none transition-colors"
+                />
+                <button
+                  type="submit"
+                  disabled={!candidateInputText.trim()}
+                  className="p-2 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-40 disabled:hover:bg-blue-600 text-white transition-colors"
+                  title="Send answer to interviewer"
+                >
+                  <Send className="w-3.5 h-3.5" />
+                </button>
+              </form>
+            </div>
           </div>
         </div>
 
@@ -556,19 +651,21 @@ export default function InterviewRoomPage() {
                     : "text-slate-400 hover:text-slate-200"
                 }`}
               >
-                <FileQuestion className="w-3.5 h-3.5" /> Problem Prompt
+                <FileQuestion className="w-3.5 h-3.5" /> Full Problem Details
               </button>
             </div>
           </div>
 
           {/* Workbench Tab Content */}
-          <div className="flex-1 p-4 overflow-hidden">
+          <div className="flex-1 p-3 overflow-hidden">
             {activeTab === "code" && (
               <CodeSandbox
                 initialLanguage={activeQuestion?.category === "SQL" ? "sql" : "python"}
                 initialCode={activeQuestion?.starter_code || "# Write your Python solution here\n"}
                 seedSql={activeQuestion?.seed_sql}
                 unitTests={activeQuestion?.unit_tests}
+                activeQuestion={activeQuestion}
+                onAskInterviewer={handleSendDirectPrompt}
                 onCodeExecuted={handleCodeExecuted}
                 onWorkingStateChange={handleWorkingStateChange}
               />

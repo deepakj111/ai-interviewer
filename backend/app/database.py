@@ -3,7 +3,7 @@
 import datetime
 from collections.abc import AsyncGenerator
 
-from sqlalchemy import Column, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Column, DateTime, Float, ForeignKey, Integer, String, Text, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import declarative_base, relationship
 
@@ -54,6 +54,7 @@ class InterviewSessionModel(Base):
     status = Column(String(30), default="CREATED", nullable=False)
     fsm_state = Column(String(50), default="INTRO", nullable=False)
     active_question_id = Column(String(100), nullable=True)
+    api_key = Column(String(255), nullable=True)
 
     # Relationships
     transcripts = relationship(
@@ -114,9 +115,16 @@ class EvaluationReportModel(Base):
 
 
 async def init_db() -> None:
-    """Initialize database tables."""
+    """Initialize database tables and run automatic migrations."""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        if "sqlite" in settings.DATABASE_URL:
+            result = await conn.execute(text("PRAGMA table_info(interview_sessions)"))
+            columns = [row[1] for row in result.fetchall()]
+            if "api_key" not in columns:
+                await conn.execute(
+                    text("ALTER TABLE interview_sessions ADD COLUMN api_key VARCHAR(255)")
+                )
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:

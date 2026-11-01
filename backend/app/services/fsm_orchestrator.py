@@ -1,7 +1,7 @@
 """Deterministic Finite State Machine (FSM) and Rolling Context Compaction."""
 
 from app.schemas import FSMStateSnapshot, InterviewMode, InterviewStage, QuestionItem
-from app.services.question_bank import get_questions_by_category
+from app.services.question_bank import get_question_by_id
 
 STAGE_BUDGETS_SECONDS: dict[InterviewStage, int] = {
     InterviewStage.INTRO: 120,  # 2 minutes
@@ -96,21 +96,74 @@ class InterviewFSM:
         if self.is_terminal:
             return self.current_stage, "The interview is now in the final wrap-up stage."
 
-        prev_stage = self.current_stage
         self.current_index += 1
         self.stage_start_elapsed = 0
         new_stage = self.current_stage
 
         # Assign relevant question if entering coding or system design
-        if new_stage == InterviewStage.LIVE_CODING_SQL_PYTHON and not self.active_question_id:
-            sql_questions = get_questions_by_category(_app_schemas_category := "SQL")
-            if sql_questions:
-                self.active_question_id = sql_questions[0].id
+        if new_stage == InterviewStage.LIVE_CODING_SQL_PYTHON:
+            active_q = (
+                get_question_by_id(self.active_question_id) if self.active_question_id else None
+            )
+            if not active_q or active_q.category not in ["SQL", "PYTHON"]:
+                self.active_question_id = "sql_01_retention_cohort"
 
-        transition_announcement = (
-            f"Transitioning from {prev_stage.value} to {new_stage.value}. "
-            f"Focus for this stage: {new_stage.value}."
-        )
+        elif new_stage == InterviewStage.ML_SYSTEM_DESIGN:
+            active_q = (
+                get_question_by_id(self.active_question_id) if self.active_question_id else None
+            )
+            if not active_q or active_q.category != "ML_SYSTEM_DESIGN":
+                self.active_question_id = "sys_01_realtime_fraud"
+
+        active_q = get_question_by_id(self.active_question_id) if self.active_question_id else None
+
+        if new_stage == InterviewStage.RESUME_DEEP_DIVE:
+            transition_announcement = (
+                "Thank you for that overview. Now let's transition to our Resume Deep-Dive. "
+                "I'd like to explore your technical projects and the real-world operational trade-offs "
+                "of the production machine learning pipelines you've built."
+            )
+        elif new_stage == InterviewStage.LIVE_CODING_SQL_PYTHON:
+            if active_q:
+                intro_desc = active_q.verbal_introduction or active_q.prompt
+                transition_announcement = (
+                    f"Now we'll move into our live technical coding evaluation. "
+                    f"The problem set up in your workbench is '{active_q.title}'. {intro_desc} "
+                    "Take a moment to review the code sandbox. Before you start typing, "
+                    "how are you thinking about structuring your solution?"
+                )
+            else:
+                transition_announcement = (
+                    "Now we'll move into our live technical coding round. "
+                    "Please review the active problem in your workbench, and walk me through your initial algorithm before typing."
+                )
+        elif new_stage == InterviewStage.ML_SYSTEM_DESIGN:
+            if active_q:
+                intro_desc = active_q.verbal_introduction or active_q.prompt
+                transition_announcement = (
+                    f"Great. Now we'll transition to our ML System Design challenge. "
+                    f"Our scenario today is '{active_q.title}'. {intro_desc} "
+                    "You have the Excalidraw design canvas on the right to sketch out system components. "
+                    "How would you structure this system, starting from high-level data ingestion and candidate generation?"
+                )
+            else:
+                transition_announcement = (
+                    "Now let's transition to our ML System Design section. "
+                    "You have an interactive design whiteboard available on the right. "
+                    "Walk me through your high-level architecture and how you plan to handle latency and throughput requirements."
+                )
+        elif new_stage == InterviewStage.WRAP_UP:
+            transition_announcement = (
+                "That concludes the technical evaluation segments of our interview today. "
+                "You covered substantial technical ground across our discussion. "
+                "In the time we have remaining, what questions do you have for me about our engineering architecture, team, or challenges?"
+            )
+        else:
+            transition_announcement = (
+                f"Transitioning to {new_stage.value.replace('_', ' ')}. "
+                "Let's continue with our technical discussion."
+            )
+
         return new_stage, transition_announcement
 
     def record_stage_summary(self, stage: InterviewStage, summary: str) -> None:

@@ -92,6 +92,9 @@ class QuestionItem(BaseModel):
     seed_sql: str | None = None
     unit_tests: str | None = None
     rubric_criteria: list[str] = Field(default_factory=list)
+    verbal_introduction: str | None = None
+    clarifications: dict[str, str] = Field(default_factory=dict)
+    hints: list[str] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
