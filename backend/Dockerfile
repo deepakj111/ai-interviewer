@@ -22,6 +22,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=builder /install /usr/local
 COPY app/ /app/app/
 COPY pyproject.toml /app/
+RUN mkdir -p /app/data
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
