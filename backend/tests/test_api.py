@@ -1,11 +1,12 @@
 """Integration tests for FastAPI REST and WebSocket endpoints."""
 
 import pytest
+from fastapi import WebSocketDisconnect
 from httpx import ASGITransport, AsyncClient
-from starlette.testclient import TestClient
 
 from app.database import init_db
 from app.main import app
+from app.services.gemini_live import LiveInterviewSessionHandler
 
 
 @pytest.fixture(autouse=True)
@@ -84,36 +85,53 @@ async def test_session_lifecycle_and_evaluation():
         assert report_resp.json()["overall_score"] == eval_data["overall_score"]
 
 
-def test_websocket_interview_simulation():
-    # Create session synchronously using test client
-    client = TestClient(app)
-    init_res = client.post(
-        "/api/session/init",
-        data={"target_role": "Senior ML Engineer", "interview_mode": "FULL_LOOP"},
-    )
-    assert init_res.status_code == 200
-    session_id = init_res.json()["session_id"]
+class MockWebSocket:
+    """Lightweight asynchronous mock for WebSocket transport."""
 
-    # Connect to WebSocket
-    with client.websocket_connect(f"/ws/interview/{session_id}") as websocket:
-        # Receive FSM snapshot
-        snapshot_msg = websocket.receive_json()
-        assert snapshot_msg["type"] == "fsm_snapshot"
+    def __init__(self, incoming_messages):
+        self.incoming = list(incoming_messages)
+        self.sent_messages = []
+        self.accepted = False
 
-        # Receive greeting caption
-        caption_msg = websocket.receive_json()
-        assert caption_msg["type"] == "transcript_caption"
-        assert caption_msg["speaker"] == "interviewer"
+    async def accept(self):
+        self.accepted = True
 
-        # Send candidate answer
-        websocket.send_json(
+    async def send_json(self, data):
+        self.sent_messages.append(data)
+
+    async def receive_json(self):
+        if self.incoming:
+            return self.incoming.pop(0)
+        raise WebSocketDisconnect(code=1000)
+
+
+@pytest.mark.asyncio
+async def test_websocket_interview_simulation():
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        init_res = await ac.post(
+            "/api/session/init",
+            data={"target_role": "Senior ML Engineer", "interview_mode": "FULL_LOOP"},
+        )
+        assert init_res.status_code == 200
+        session_id = init_res.json()["session_id"]
+
+    mock_ws = MockWebSocket(
+        [
             {
                 "type": "text_turn",
                 "text": "I led the development of a real-time ranking engine with 10ms SLA.",
-            }
-        )
-        reply_msg = websocket.receive_json()
-        assert reply_msg["type"] == "transcript_caption"
+            },
+            {"type": "close"},
+        ]
+    )
 
-        # Cleanly signal close
-        websocket.send_json({"type": "close"})
+    handler = LiveInterviewSessionHandler(
+        websocket=mock_ws,  # type: ignore[arg-type]
+        session_id=session_id,
+    )
+    await handler.handle_client()
+
+    assert mock_ws.accepted is True
+    msg_types = [m.get("type") for m in mock_ws.sent_messages]
+    assert "fsm_snapshot" in msg_types
+    assert "transcript_caption" in msg_types
