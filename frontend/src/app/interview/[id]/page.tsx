@@ -15,12 +15,15 @@ import {
   Layers,
   Pause,
   Send,
-  MessageSquare,
-  HelpCircle,
-  Lightbulb,
   Radio,
   UserCheck,
   Shuffle,
+  Hand,
+  Globe,
+  Building2,
+  Rocket,
+  HelpCircle,
+  Lightbulb,
 } from "lucide-react";
 import InterviewerAvatar from "@/components/InterviewerAvatar";
 import CandidateWebcam from "@/components/CandidateWebcam";
@@ -28,6 +31,56 @@ import CodeSandbox from "@/components/CodeSandbox";
 import SystemDesignCanvas from "@/components/SystemDesignCanvas";
 import { AudioPlayerQueue, AudioRecorder } from "@/lib/audioStream";
 import { INTERVIEWER_PERSONAS, InterviewerPersona, voiceManager } from "@/lib/voiceManager";
+
+function getStagesPipeline(interviewMode?: string) {
+  switch (interviewMode) {
+    case "ML_BREADTH":
+      return [
+        { id: "INTRO", label: "Intro" },
+        { id: "ML_BREADTH", label: "ML Breadth Sprint" },
+        { id: "BEHAVIORAL_BAR_RAISER", label: "Wrap-up" },
+      ];
+    case "ML_DEPTH":
+      return [
+        { id: "INTRO", label: "Intro" },
+        { id: "ML_DEPTH", label: "Deep-Dive Theory" },
+        { id: "BEHAVIORAL_BAR_RAISER", label: "Wrap-up" },
+      ];
+    case "GENERATIVE_AI_LLM":
+      return [
+        { id: "INTRO", label: "Intro" },
+        { id: "GENERATIVE_AI", label: "GenAI & LLM Architecture" },
+        { id: "BEHAVIORAL_BAR_RAISER", label: "Wrap-up" },
+      ];
+    case "SQL_PYTHON_CODING":
+      return [
+        { id: "INTRO", label: "Intro" },
+        { id: "LIVE_CODING_SQL_PYTHON", label: "Coding Sprint" },
+        { id: "BEHAVIORAL_BAR_RAISER", label: "Wrap-up" },
+      ];
+    case "ML_SYSTEM_DESIGN":
+      return [
+        { id: "INTRO", label: "Intro" },
+        { id: "ML_SYSTEM_DESIGN", label: "System Architecture" },
+        { id: "BEHAVIORAL_BAR_RAISER", label: "Wrap-up" },
+      ];
+    case "RESUME_DEEP_DIVE":
+      return [
+        { id: "INTRO", label: "Intro" },
+        { id: "RESUME_DEEP_DIVE", label: "Project Deep-Dive" },
+        { id: "BEHAVIORAL_BAR_RAISER", label: "Wrap-up" },
+      ];
+    case "FULL_LOOP":
+    default:
+      return [
+        { id: "INTRO", label: "Intro" },
+        { id: "RESUME_DEEP_DIVE", label: "Resume" },
+        { id: "LIVE_CODING_SQL_PYTHON", label: "Coding" },
+        { id: "ML_SYSTEM_DESIGN", label: "Design" },
+        { id: "BEHAVIORAL_BAR_RAISER", label: "Wrap-up" },
+      ];
+  }
+}
 
 export default function InterviewRoomPage() {
   const params = useParams();
@@ -49,8 +102,13 @@ export default function InterviewRoomPage() {
   // Persistent Timer
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
 
-  // Audio state
+  // Audio state & Echo Prevention Refs
   const [isSpeaking, setIsSpeaking] = useState(false);
+  const isSpeakingRef = useRef(false);
+  const lastSpokeTimestampRef = useRef<number>(0);
+  const lastCandidateActivityRef = useRef<number>(Date.now());
+  const [silencePrompt, setSilencePrompt] = useState<string | null>(null);
+
   const [frequencyLevel, setFrequencyLevel] = useState(0);
   const [isMicMuted, setIsMicMuted] = useState(false);
   const [isTtsEnabled, setIsTtsEnabled] = useState(true);
@@ -129,6 +187,20 @@ export default function InterviewRoomPage() {
     return () => clearInterval(interval);
   }, [sessionId, sessionData]);
 
+  // Silence Monitor: human-like patient check
+  useEffect(() => {
+    const silenceCheck = setInterval(() => {
+      if (isSpeakingRef.current || isCandidateWorking) {
+        return;
+      }
+      const idleMs = Date.now() - lastCandidateActivityRef.current;
+      if (idleMs > 25000 && !silencePrompt) {
+        setSilencePrompt("Take your time to structure your thoughts, or speak up whenever you're ready.");
+      }
+    }, 5000);
+    return () => clearInterval(silenceCheck);
+  }, [silencePrompt, isCandidateWorking]);
+
   // Format mm:ss
   const formatTime = (secs: number) => {
     const m = Math.floor(secs / 60);
@@ -136,18 +208,43 @@ export default function InterviewRoomPage() {
     return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
   };
 
-  // Deterministic Persona-Locked Speech Synthesis
+  // Instant Barge-In / Interruption Handler
+  const handleInterrupt = useCallback(() => {
+    voiceManager.cancel();
+    if (audioPlayerRef.current) {
+      audioPlayerRef.current.stop();
+    }
+    isSpeakingRef.current = false;
+    setIsSpeaking(false);
+    setFrequencyLevel(0);
+    lastSpokeTimestampRef.current = Date.now();
+    lastCandidateActivityRef.current = Date.now();
+    setSilencePrompt(null);
+
+    if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+      socketRef.current.send(JSON.stringify({ type: "interrupt" }));
+    }
+  }, []);
+
+  // Deterministic Persona-Locked Speech Synthesis with Echo-Loop Safeguard
   const speakInterviewerCaption = useCallback(
     (text: string) => {
       if (!isTtsEnabled) return;
       if (hasLiveAudioRef.current) return; // Use Gemini Live PCM stream if actively delivering audio
 
+      isSpeakingRef.current = true;
+      setIsSpeaking(true);
+
       voiceManager.speak(text, {
         onStart: () => {
+          isSpeakingRef.current = true;
           setIsSpeaking(true);
         },
         onEnd: () => {
+          isSpeakingRef.current = false;
           setIsSpeaking(false);
+          lastSpokeTimestampRef.current = Date.now();
+          lastCandidateActivityRef.current = Date.now();
           setFrequencyLevel(0);
         },
         onFrequency: (freq) => {
@@ -167,13 +264,20 @@ export default function InterviewRoomPage() {
   const handleTestVoice = () => {
     if (isTestingVoice) return;
     setIsTestingVoice(true);
+    isSpeakingRef.current = true;
+    setIsSpeaking(true);
     voiceManager.speak(
       `Hello, I am ${selectedPersona.name}. I am ready to begin your technical interview for ${sessionData?.target_role || "Senior ML Engineer"}.`,
       {
-        onStart: () => setIsSpeaking(true),
+        onStart: () => {
+          isSpeakingRef.current = true;
+          setIsSpeaking(true);
+        },
         onEnd: () => {
+          isSpeakingRef.current = false;
           setIsSpeaking(false);
           setIsTestingVoice(false);
+          lastSpokeTimestampRef.current = Date.now();
           setFrequencyLevel(0);
         },
         onFrequency: (freq) => setFrequencyLevel(freq),
@@ -184,15 +288,9 @@ export default function InterviewRoomPage() {
   // Interviewer Thinking state
   const [isInterviewerThinking, setIsInterviewerThinking] = useState(false);
 
-  const STAGES_PIPELINE = [
-    { id: "INTRO", label: "Intro" },
-    { id: "RESUME_DEEP_DIVE", label: "Resume" },
-    { id: "LIVE_CODING_SQL_PYTHON", label: "Coding" },
-    { id: "ML_SYSTEM_DESIGN", label: "Design" },
-    { id: "BEHAVIORAL_BAR_RAISER", label: "Wrap-up" },
-  ];
+  const stagesPipeline = getStagesPipeline(sessionData?.interview_mode);
 
-  // Browser SpeechRecognition for Candidate Microphone
+  // Browser SpeechRecognition for Candidate Microphone with Echo-Loop Filter & Barge-In
   useEffect(() => {
     if (typeof window === "undefined") return;
     const SpeechRecognition =
@@ -205,12 +303,30 @@ export default function InterviewRoomPage() {
         recognition.interimResults = false;
         recognition.lang = "en-US";
 
+        recognition.onspeechstart = () => {
+          // If candidate started speaking while interviewer was talking -> Barge in!
+          if (isSpeakingRef.current) {
+            handleInterrupt();
+          }
+          lastCandidateActivityRef.current = Date.now();
+          setSilencePrompt(null);
+        };
+
         recognition.onresult = (event: any) => {
+          // CRITICAL ACOUSTIC SAFEGUARD:
+          // If the interviewer is speaking, or finished less than 1000ms ago, discard audio!
+          // This prevents the computer mic from hearing the speaker and creating an infinite loop.
+          if (isSpeakingRef.current || Date.now() - lastSpokeTimestampRef.current < 1000) {
+            return;
+          }
+
           const results = event.results;
           const last = results[results.length - 1];
           if (last.isFinal) {
             const transcript = last[0].transcript.trim();
             if (transcript && socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+              lastCandidateActivityRef.current = Date.now();
+              setSilencePrompt(null);
               setTranscripts((prev) => [...prev, { speaker: "candidate", text: transcript }]);
               setIsInterviewerThinking(true);
               socketRef.current.send(
@@ -243,7 +359,7 @@ export default function InterviewRoomPage() {
         } catch (_) {}
       }
     };
-  }, [isMicMuted]);
+  }, [isMicMuted, handleInterrupt]);
 
   // Establish WebSocket connection and Audio streaming
   useEffect(() => {
@@ -263,6 +379,10 @@ export default function InterviewRoomPage() {
         const freq = audioPlayerRef.current.getFrequencyData();
         setFrequencyLevel(freq);
         setIsSpeaking(freq > 5);
+        isSpeakingRef.current = freq > 5;
+        if (freq > 5) {
+          lastSpokeTimestampRef.current = Date.now();
+        }
       }
       animFrameRef.current = requestAnimationFrame(updateFrequency);
     };
@@ -271,6 +391,7 @@ export default function InterviewRoomPage() {
     // Audio Recorder (16kHz PCM capture for Gemini Live)
     const audioRecorder = new AudioRecorder((base64Pcm) => {
       if (!isMicMuted && ws.readyState === WebSocket.OPEN) {
+        // Only stream live mic PCM if interviewer is not speaking (or candidate is barging in)
         ws.send(JSON.stringify({ type: "audio", data: base64Pcm }));
       }
     }, 16000);
@@ -293,12 +414,12 @@ export default function InterviewRoomPage() {
           if (msg.data.active_question) {
             setActiveQuestion(msg.data.active_question);
           }
-          // Automatically focus appropriate workbench tab when stage advances
+          // Focus appropriate workbench tab when stage advances
           if (msg.data.current_stage === "LIVE_CODING_SQL_PYTHON") {
             setActiveTab("code");
           } else if (msg.data.current_stage === "ML_SYSTEM_DESIGN") {
             setActiveTab("canvas");
-          } else if (msg.data.current_stage === "BEHAVIORAL_BAR_RAISER") {
+          } else if (["ML_BREADTH", "ML_DEPTH", "GENERATIVE_AI", "BEHAVIORAL_BAR_RAISER"].includes(msg.data.current_stage)) {
             setActiveTab("prompt");
           }
         } else if (msg.type === "transcript_caption") {
@@ -308,8 +429,17 @@ export default function InterviewRoomPage() {
           if (msg.speaker === "interviewer") {
             speakInterviewerCaption(msg.text);
           }
+        } else if (msg.type === "interrupted") {
+          // Backend acknowledged barge-in
+          voiceManager.cancel();
+          audioPlayer.stop();
+          isSpeakingRef.current = false;
+          setIsSpeaking(false);
+          setFrequencyLevel(0);
         } else if (msg.type === "audio_chunk") {
           hasLiveAudioRef.current = true;
+          isSpeakingRef.current = true;
+          setIsSpeaking(true);
           audioPlayer.playChunk(msg.data);
         }
       } catch (err) {
@@ -334,6 +464,14 @@ export default function InterviewRoomPage() {
     const text = candidateInputText.trim();
     if (!text) return;
 
+    // If interviewer is speaking, interrupt them!
+    if (isSpeakingRef.current) {
+      handleInterrupt();
+    }
+
+    lastCandidateActivityRef.current = Date.now();
+    setSilencePrompt(null);
+
     if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
       setIsInterviewerThinking(true);
       socketRef.current.send(
@@ -349,6 +487,14 @@ export default function InterviewRoomPage() {
 
   const handleSendDirectPrompt = (prompt: string) => {
     if (!prompt.trim()) return;
+
+    if (isSpeakingRef.current) {
+      handleInterrupt();
+    }
+
+    lastCandidateActivityRef.current = Date.now();
+    setSilencePrompt(null);
+
     if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
       setIsInterviewerThinking(true);
       socketRef.current.send(
@@ -364,6 +510,10 @@ export default function InterviewRoomPage() {
   // Keystroke VAD Gate: notify backend when candidate is actively typing/drawing
   const handleWorkingStateChange = (isActive: boolean) => {
     setIsCandidateWorking(isActive);
+    if (isActive) {
+      lastCandidateActivityRef.current = Date.now();
+      setSilencePrompt(null);
+    }
     if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
       socketRef.current.send(
         JSON.stringify({
@@ -375,6 +525,8 @@ export default function InterviewRoomPage() {
   };
 
   const handleCodeExecuted = (payload: { language: string; code: string; stdout: string; error?: string }) => {
+    lastCandidateActivityRef.current = Date.now();
+    setSilencePrompt(null);
     if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
       setIsInterviewerThinking(true);
       socketRef.current.send(
@@ -390,6 +542,8 @@ export default function InterviewRoomPage() {
   };
 
   const handleCanvasSnapshot = (dataUrl: string) => {
+    lastCandidateActivityRef.current = Date.now();
+    setSilencePrompt(null);
     if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
       socketRef.current.send(
         JSON.stringify({
@@ -415,7 +569,7 @@ export default function InterviewRoomPage() {
           setActiveTab("code");
         } else if (data.new_stage === "ML_SYSTEM_DESIGN") {
           setActiveTab("canvas");
-        } else if (data.new_stage === "BEHAVIORAL_BAR_RAISER") {
+        } else if (["ML_BREADTH", "ML_DEPTH", "GENERATIVE_AI", "BEHAVIORAL_BAR_RAISER"].includes(data.new_stage)) {
           setActiveTab("prompt");
         }
       }
@@ -458,7 +612,7 @@ export default function InterviewRoomPage() {
   };
 
   const currentStageName = fsmSnapshot?.current_stage || "INTRO";
-  const currentStageIdx = STAGES_PIPELINE.findIndex((s) => s.id === currentStageName);
+  const currentStageIdx = stagesPipeline.findIndex((s) => s.id === currentStageName);
 
   return (
     <div className="flex flex-col h-screen bg-slate-950 text-slate-100 overflow-hidden select-none">
@@ -472,6 +626,33 @@ export default function InterviewRoomPage() {
             </span>
           </div>
 
+          {/* Company Archetype Badge */}
+          {sessionData?.company_archetype === "INDIAN_PRODUCT" && (
+            <span className="hidden sm:flex items-center gap-1 px-2 py-0.5 rounded-full bg-orange-500/10 border border-orange-500/20 text-orange-300 text-[11px] font-semibold">
+              🇮🇳 Indian Product Tech
+            </span>
+          )}
+          {sessionData?.company_archetype === "AI_STARTUP" && (
+            <span className="hidden sm:flex items-center gap-1 px-2 py-0.5 rounded-full bg-purple-500/10 border border-purple-500/20 text-purple-300 text-[11px] font-semibold">
+              <Rocket className="w-3 h-3 text-purple-400" />
+              <span>AI Startup</span>
+            </span>
+          )}
+          {sessionData?.company_archetype === "FAANG_GLOBAL" && (
+            <span className="hidden sm:flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-300 text-[11px] font-semibold">
+              <Building2 className="w-3 h-3 text-blue-400" />
+              <span>Global Tech</span>
+            </span>
+          )}
+
+          {/* Gemini Live Search Grounded badge */}
+          {sessionData?.enable_live_web_search && (
+            <span className="hidden xl:flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-[10px] font-semibold">
+              <Globe className="w-3 h-3 text-emerald-400" />
+              <span>Gemini Grounded</span>
+            </span>
+          )}
+
           <div className="h-4 w-px bg-slate-800" />
 
           {/* Persistent Session Timer Badge */}
@@ -480,9 +661,9 @@ export default function InterviewRoomPage() {
             <span>{formatTime(elapsedSeconds)}</span>
           </div>
 
-          {/* Visual Stage Stepper Pipeline */}
+          {/* Dynamic Visual Stage Stepper Pipeline */}
           <div className="hidden lg:flex items-center gap-1 px-2.5 py-1 rounded-full bg-slate-900 border border-slate-800 text-[11px]">
-            {STAGES_PIPELINE.map((stage, idx) => {
+            {stagesPipeline.map((stage, idx) => {
               const isPast = idx < currentStageIdx;
               const isCurrent = idx === currentStageIdx;
               return (
@@ -498,7 +679,7 @@ export default function InterviewRoomPage() {
                   >
                     {stage.label}
                   </span>
-                  {idx < STAGES_PIPELINE.length - 1 && (
+                  {idx < stagesPipeline.length - 1 && (
                     <span className="text-slate-700 text-[9px] font-bold">›</span>
                   )}
                 </div>
@@ -517,6 +698,19 @@ export default function InterviewRoomPage() {
 
         {/* Action Controls */}
         <div className="flex items-center gap-2">
+          {/* Barge-In / Cut-In Button (Visible when Interviewer is Speaking) */}
+          {isSpeaking && (
+            <button
+              type="button"
+              onClick={handleInterrupt}
+              className="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold flex items-center gap-1.5 shadow-lg shadow-amber-500/20 animate-pulse transition-all"
+              title="Interrupt interviewer immediately (barge-in)"
+            >
+              <Hand className="w-3.5 h-3.5" />
+              <span>Cut In / Speak</span>
+            </button>
+          )}
+
           {/* Persona Selector Dropdown */}
           <div className="flex items-center bg-slate-900 border border-slate-800 rounded-xl px-2 py-1 text-xs">
             <UserCheck className="w-3.5 h-3.5 text-blue-400 mr-1.5" />
@@ -581,7 +775,7 @@ export default function InterviewRoomPage() {
             onClick={handleEndInterview}
             className="px-4 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold flex items-center gap-1.5 shadow-md shadow-rose-600/20 transition-colors"
           >
-            <PhoneOff className="w-3.5 h-3.5" /> End Call & Get Scorecard
+            <PhoneOff className="w-3.5 h-3.5" /> End Call & Scorecard
           </button>
         </div>
       </header>
@@ -649,6 +843,23 @@ export default function InterviewRoomPage() {
                 </div>
               )}
 
+              {/* Human-like Patience Prompt / Encouraging Banner */}
+              {silencePrompt && !isSpeaking && (
+                <div className="p-2.5 rounded-xl text-xs bg-amber-500/10 border border-amber-500/20 text-amber-200 flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <Sparkles className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                    <span>{silencePrompt}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleSendDirectPrompt("I'm formulating my response, could you give me a minute or a quick hint?")}
+                    className="px-2 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 text-[10px] font-semibold whitespace-nowrap transition-colors"
+                  >
+                    Need Hint
+                  </button>
+                </div>
+              )}
+
               <div ref={transcriptEndRef} />
             </div>
 
@@ -676,6 +887,15 @@ export default function InterviewRoomPage() {
                 >
                   Get Hint
                 </button>
+                {isSpeaking && (
+                  <button
+                    type="button"
+                    onClick={handleInterrupt}
+                    className="px-2 py-0.5 rounded-md bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-[10px] text-amber-300 font-bold transition-colors ml-auto flex items-center gap-1"
+                  >
+                    <Hand className="w-2.5 h-2.5" /> Cut In
+                  </button>
+                )}
               </div>
 
               {/* Candidate Response Input Bar (Spoken or Typed) with Mic State Indicator */}
@@ -758,7 +978,7 @@ export default function InterviewRoomPage() {
                     : "text-slate-400 hover:text-slate-200"
                 }`}
               >
-                <FileQuestion className="w-3.5 h-3.5" /> Full Problem Details
+                <FileQuestion className="w-3.5 h-3.5" /> Problem & Theory Rubric
               </button>
             </div>
 
@@ -769,7 +989,7 @@ export default function InterviewRoomPage() {
                 onClick={handleSwitchQuestion}
                 disabled={isSwitchingQuestion}
                 className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-medium flex items-center gap-1.5 transition-colors border border-slate-700/60"
-                title="Switch to another problem from the 21-question bank"
+                title="Switch to another problem from the question bank"
               >
                 <Shuffle className={`w-3.5 h-3.5 text-blue-400 ${isSwitchingQuestion ? "animate-spin" : ""}`} />
                 <span>{isSwitchingQuestion ? "Switching..." : "Next Problem"}</span>

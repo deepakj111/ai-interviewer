@@ -142,3 +142,16 @@ async def test_websocket_interview_simulation():
     msg_types = [m.get("type") for m in mock_ws.sent_messages]
     assert "fsm_snapshot" in msg_types
     assert "transcript_caption" in msg_types
+
+
+@pytest.mark.asyncio
+async def test_recent_real_world_questions_api():
+    """Verify GET /api/questions/recent_real_world returns real company questions."""
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        res = await ac.get(
+            "/api/questions/recent_real_world?company=Swiggy&role=Senior+ML+Engineer&track=ML_SYSTEM_DESIGN"
+        )
+        assert res.status_code == 200
+        data = res.json()
+        assert data["company"] == "Swiggy"
+        assert len(data["questions"]) >= 2

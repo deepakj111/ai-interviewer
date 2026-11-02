@@ -14,7 +14,7 @@ from google.genai import types
 
 from app.config import get_settings
 from app.prompts.interviewer_system import build_interviewer_session_prompt
-from app.schemas import CandidateClaimGraph, InterviewStage, QuestionItem
+from app.schemas import CandidateClaimGraph, InterviewMode, InterviewStage, QuestionItem
 
 logger = logging.getLogger(__name__)
 
@@ -153,12 +153,16 @@ class InterviewerEngine:
         session_id: str,
         target_role: str = "Senior Machine Learning Engineer",
         target_company: str = "Top Tech",
+        company_archetype: str = "FAANG_GLOBAL",
+        interview_mode: InterviewMode = InterviewMode.FULL_LOOP,
         claim_graph: CandidateClaimGraph | None = None,
         api_key: str | None = None,
     ):
         self.session_id = session_id
         self.target_role = target_role
         self.target_company = target_company
+        self.company_archetype = company_archetype
+        self.interview_mode = interview_mode
         self.claim_graph = claim_graph
         self.api_key = api_key or get_settings().GEMINI_API_KEY
         self.settings = get_settings()
@@ -172,9 +176,25 @@ class InterviewerEngine:
     ) -> str:
         """Generate a natural, spoken introduction for each stage."""
         if stage == InterviewStage.INTRO:
+            if self.company_archetype == "INDIAN_PRODUCT":
+                return (
+                    f"Hello and welcome! I'm Dr. Elena Vance, Principal Bar-Raiser here at {self.target_company}. "
+                    f"My team focuses on solving high-throughput, low-latency ML challenges at Indian market scale. "
+                    "Today's session is an open, collaborative technical dialogue rather than a formal test. "
+                    "To kick things off, please walk me through your engineering journey, your key ML specializations, "
+                    "and a production system you've delivered."
+                )
+            elif self.company_archetype == "AI_STARTUP":
+                return (
+                    f"Hi there! I'm Alex Chen, Staff Architect at {self.target_company}. "
+                    "We move fast and focus on shipping pragmatic, high-impact AI systems and low-latency inference. "
+                    "Feel free to think out loud and challenge assumptions throughout our discussion today. "
+                    "To start, tell me a bit about yourself and the most interesting technical challenge you've tackled recently."
+                )
             return (
-                f"Hello, welcome! I'm pleased to meet you today for our technical interview for the "
-                f"{self.target_role} position at {self.target_company}. "
+                f"Hello, welcome! I'm Dr. Elena Vance, Principal Bar-Raiser at {self.target_company}. "
+                f"I'm pleased to meet you today for our technical interview for the {self.target_role} position. "
+                "Today will be a collaborative deep-dive into real-world machine learning engineering. "
                 "Let's begin with a concise 60-second overview: walk me through your engineering background, "
                 "core technical specializations, and production ML systems you've delivered."
             )
@@ -197,6 +217,30 @@ class InterviewerEngine:
                 "I'd like to explore the most complex machine learning system or distributed data pipeline "
                 "you've built in production. Walk me through the system architecture, baseline models, "
                 "and how you measured offline versus online metric alignment."
+            )
+
+        elif stage == InterviewStage.ML_BREADTH:
+            return (
+                "Now we'll transition to our ML Breadth evaluation. "
+                "In this round, we'll move rapidly across core foundational machine learning concepts: "
+                "bias-variance trade-offs, loss formulations, regularization, feature engineering, and evaluation metrics. "
+                "Let's jump straight in: how do you systematically choose between L1 and L2 regularization for high-dimensional sparse features?"
+            )
+
+        elif stage == InterviewStage.ML_DEPTH:
+            return (
+                "Now we'll transition to our ML Depth round. "
+                "Here we'll go deep into the mathematical mechanics, derivations, and internal architectural trade-offs. "
+                "Let's start with loss optimization: walk me through the analytical gradient derivation for binary cross-entropy with a sigmoid activation, "
+                "and explain why saturated sigmoids lead to vanishing gradients."
+            )
+
+        elif stage == InterviewStage.GENERATIVE_AI:
+            return (
+                "Now we'll move into our Generative AI and LLM Systems round. "
+                "We'll explore modern LLM architectures, fine-tuning methodologies, RAG retrieval pipelines, and low-latency inference serving. "
+                "To begin: when building an enterprise RAG system with high-precision compliance requirements, "
+                "how do you architect your chunking, hybrid retrieval, and re-ranking pipeline to minimize hallucinations?"
             )
 
         elif stage == InterviewStage.LIVE_CODING_SQL_PYTHON:
@@ -249,6 +293,25 @@ class InterviewerEngine:
             )
 
         return "Understood. Let's continue with our technical discussion."
+
+    def handle_silence(
+        self,
+        seconds_silent: int = 18,
+        stage: InterviewStage = InterviewStage.INTRO,
+        active_question: QuestionItem | None = None,
+    ) -> str:
+        """Provide a gentle, empathetic prompt when candidate is pausing or silent."""
+        if seconds_silent <= 25:
+            return (
+                "Take your time to think through the design. "
+                "Feel free to think out loud as you reason through it, or let me know if you want to clarify any assumptions first."
+            )
+        elif seconds_silent <= 50:
+            return (
+                "Whenever you're ready, let me know what direction you're leaning toward. "
+                "We can also discuss the trade-offs together if that helps."
+            )
+        return "I'm here whenever you're ready to proceed. Would you like a targeted hint to help kick off your solution?"
 
     async def generate_turn_response(
         self,

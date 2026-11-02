@@ -3,7 +3,7 @@
 import datetime
 from collections.abc import AsyncGenerator
 
-from sqlalchemy import Column, DateTime, Float, ForeignKey, Integer, String, Text, text
+from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import declarative_base, relationship
 
@@ -45,6 +45,8 @@ class InterviewSessionModel(Base):
     interview_mode = Column(String(50), default="FULL_LOOP", nullable=False)
     target_role = Column(String(100), default="Senior Machine Learning Engineer")
     target_company = Column(String(100), default="Top Tech")
+    company_archetype = Column(String(50), default="FAANG_GLOBAL")
+    enable_live_web_search = Column(Boolean, default=False)
     job_description = Column(Text, nullable=True)
 
     resume_filename = Column(String(255), nullable=True)
@@ -124,6 +126,18 @@ async def init_db() -> None:
             if "api_key" not in columns:
                 await conn.execute(
                     text("ALTER TABLE interview_sessions ADD COLUMN api_key VARCHAR(255)")
+                )
+            if "company_archetype" not in columns:
+                await conn.execute(
+                    text(
+                        "ALTER TABLE interview_sessions ADD COLUMN company_archetype VARCHAR(50) DEFAULT 'FAANG_GLOBAL'"
+                    )
+                )
+            if "enable_live_web_search" not in columns:
+                await conn.execute(
+                    text(
+                        "ALTER TABLE interview_sessions ADD COLUMN enable_live_web_search BOOLEAN DEFAULT 0"
+                    )
                 )
 
 

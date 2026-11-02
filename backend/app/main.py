@@ -42,6 +42,7 @@ from app.schemas import (
 )
 from app.services.fsm_orchestrator import InterviewFSM
 from app.services.gemini_live import LiveInterviewSessionHandler
+from app.services.gemini_search_grounding import fetch_recent_company_interview_questions
 from app.services.question_bank import (
     get_all_questions,
     get_question_by_id,
@@ -93,7 +94,9 @@ async def init_session(
     resume_file: UploadFile | None = File(None),
     target_role: str = Form("Senior Machine Learning Engineer"),
     target_company: str = Form("Top Tech"),
+    company_archetype: str = Form("FAANG_GLOBAL"),
     interview_mode: InterviewMode = Form(InterviewMode.FULL_LOOP),
+    enable_live_web_search: bool = Form(False),
     job_description: str | None = Form(None),
     api_key: str | None = Form(None),
     question_id: str | None = Form(None),
@@ -123,6 +126,8 @@ async def init_session(
         interview_mode=interview_mode.value,
         target_role=target_role,
         target_company=target_company,
+        company_archetype=company_archetype,
+        enable_live_web_search=enable_live_web_search,
         job_description=job_description,
         resume_filename=filename,
         resume_text=resume_text,
@@ -141,6 +146,8 @@ async def init_session(
         interview_mode=InterviewMode(session_record.interview_mode),
         target_role=session_record.target_role,
         target_company=session_record.target_company,
+        company_archetype=session_record.company_archetype or "FAANG_GLOBAL",
+        enable_live_web_search=session_record.enable_live_web_search or False,
         claim_graph=claim_graph,
         initial_stage=fsm.current_stage,
         created_at=session_record.created_at,
@@ -172,10 +179,29 @@ async def get_session(
         fsm_state=InterviewStage(session.fsm_state),
         target_role=session.target_role,
         target_company=session.target_company,
+        company_archetype=getattr(session, "company_archetype", "FAANG_GLOBAL") or "FAANG_GLOBAL",
+        enable_live_web_search=getattr(session, "enable_live_web_search", False) or False,
         claim_graph=claim_graph,
         created_at=session.created_at,
         active_question=active_q,
     )
+
+
+@app.get("/api/questions/recent_real_world")
+async def get_recent_real_world_questions(
+    company: str = "Google",
+    role: str = "Senior Machine Learning Engineer",
+    track: str = "ML_SYSTEM_DESIGN",
+    api_key: str | None = None,
+):
+    """Fetch recently reported actual interview questions via Gemini Google Search grounding or curated fallback."""
+    questions = await fetch_recent_company_interview_questions(
+        company=company,
+        role=role,
+        track=track,
+        api_key=api_key,
+    )
+    return {"company": company, "role": role, "track": track, "questions": questions}
 
 
 @app.get("/api/session/{session_id}/transcripts")

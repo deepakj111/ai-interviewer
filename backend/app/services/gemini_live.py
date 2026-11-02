@@ -13,6 +13,7 @@ from app.config import get_settings
 from app.database import AsyncSessionLocal, InterviewSessionModel, TranscriptTurnModel
 from app.prompts.interviewer_system import build_interviewer_session_prompt
 from app.schemas import CandidateClaimGraph, InterviewMode, InterviewStage
+from app.services.agentic_interviewer import AgenticInterviewer
 from app.services.fsm_orchestrator import InterviewFSM
 from app.services.interviewer_engine import InterviewerEngine
 from app.services.question_bank import get_question_by_id
@@ -66,13 +67,30 @@ class LiveInterviewSessionHandler:
             if getattr(session, "api_key", None) and not self.api_key:
                 self.api_key = session.api_key
 
+            archetype = getattr(session, "company_archetype", "FAANG_GLOBAL") or "FAANG_GLOBAL"
+            enable_search = getattr(session, "enable_live_web_search", False) or False
+
             self.engine = InterviewerEngine(
                 session_id=self.session_id,
                 target_role=session.target_role or "Senior ML Engineer",
                 target_company=session.target_company or "Top Tech",
+                company_archetype=archetype,
+                interview_mode=mode,
                 claim_graph=self.claim_graph,
                 api_key=self.api_key,
             )
+
+            self.agent = AgenticInterviewer(
+                session_id=self.session_id,
+                target_role=session.target_role or "Senior ML Engineer",
+                target_company=session.target_company or "Top Tech",
+                company_archetype=archetype,
+                interview_mode=mode,
+                claim_graph=self.claim_graph,
+                enable_live_web_search=enable_search,
+                api_key=self.api_key,
+            )
+            await self.agent.initialize()
 
     async def _save_transcript_turn(
         self, speaker: str, text: str, code_snapshot: str | None = None
@@ -200,6 +218,17 @@ class LiveInterviewSessionHandler:
                     # Trigger async shadow supervisor evaluation
                     asyncio.create_task(self._trigger_shadow_supervisor(code, prompt_txt))
 
+                elif msg_type == "text_turn":
+                    user_text = message.get("text", "")
+                    await self._save_transcript_turn("candidate", user_text)
+                    await session.send(input=f"[Candidate]: {user_text}", end_of_turn=True)
+
+                elif msg_type == "interrupt":
+                    logger.info("Candidate barge-in interruption received in live stream")
+
+                elif msg_type == "silence_ping":
+                    logger.info("Silence ping received in live stream")
+
                 elif msg_type == "working_state":
                     is_active = message.get("is_active", False)
                     if self.fsm:
@@ -275,13 +304,9 @@ class LiveInterviewSessionHandler:
                 if self.fsm and self.fsm.active_question_id
                 else None
             )
-            # Send initial stage greeting with verbal introduction
+            # Send dynamic self-introduction
             current_stg = self.fsm.current_stage if self.fsm else InterviewStage.INTRO
-            greeting = (
-                self.engine.generate_stage_greeting(current_stg, active_q)
-                if self.engine
-                else f"Welcome to the technical interview for {self.session_record.target_role}."
-            )
+            greeting = await self.agent.generate_self_introduction(active_q)
             await self.websocket.send_json(
                 {
                     "type": "transcript_caption",
@@ -298,6 +323,32 @@ class LiveInterviewSessionHandler:
                 if msg_type == "close":
                     break
 
+                elif msg_type == "interrupt":
+                    logger.info("Local candidate barge-in interrupt received")
+                    continue
+
+                elif msg_type == "silence_ping":
+                    secs = msg.get("seconds_silent", 18)
+                    active_q = (
+                        get_question_by_id(self.fsm.active_question_id)
+                        if self.fsm and self.fsm.active_question_id
+                        else None
+                    )
+                    current_stg = self.fsm.current_stage if self.fsm else InterviewStage.INTRO
+                    nudge = await self.agent.handle_silence(
+                        seconds_silent=secs,
+                        stage=current_stg,
+                        active_question=active_q,
+                    )
+                    await self.websocket.send_json(
+                        {
+                            "type": "transcript_caption",
+                            "speaker": "interviewer",
+                            "text": nudge,
+                        }
+                    )
+                    await self._save_transcript_turn("interviewer", nudge)
+
                 elif msg_type == "text_turn":
                     user_text = msg.get("text", "")
                     await self._save_transcript_turn("candidate", user_text)
@@ -312,15 +363,11 @@ class LiveInterviewSessionHandler:
                     )
                     current_stg = self.fsm.current_stage if self.fsm else InterviewStage.INTRO
 
-                    if self.engine:
-                        reply = await self.engine.generate_turn_response(
-                            user_text=user_text,
-                            stage=current_stg,
-                            active_question=active_q,
-                            conversation_history=self.conversation_history,
-                        )
-                    else:
-                        reply = "Understood. Please walk me through your technical reasoning."
+                    reply = await self.agent.generate_turn_response(
+                        user_text=user_text,
+                        stage=current_stg,
+                        active_question=active_q,
+                    )
 
                     await self.websocket.send_json(
                         {

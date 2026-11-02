@@ -13,6 +13,9 @@ class InterviewMode(StrEnum):
     RESUME_DEEP_DIVE = "RESUME_DEEP_DIVE"
     SQL_PYTHON_CODING = "SQL_PYTHON_CODING"
     ML_SYSTEM_DESIGN = "ML_SYSTEM_DESIGN"
+    ML_BREADTH = "ML_BREADTH"
+    ML_DEPTH = "ML_DEPTH"
+    GENERATIVE_AI_LLM = "GENERATIVE_AI_LLM"
 
 
 class InterviewStage(StrEnum):
@@ -22,7 +25,18 @@ class InterviewStage(StrEnum):
     RESUME_DEEP_DIVE = "RESUME_DEEP_DIVE"
     LIVE_CODING_SQL_PYTHON = "LIVE_CODING_SQL_PYTHON"
     ML_SYSTEM_DESIGN = "ML_SYSTEM_DESIGN"
+    ML_BREADTH = "ML_BREADTH"
+    ML_DEPTH = "ML_DEPTH"
+    GENERATIVE_AI = "GENERATIVE_AI"
     WRAP_UP = "WRAP_UP"
+
+
+class CompanyArchetype(StrEnum):
+    """Company cultural and engineering archetypes."""
+
+    FAANG_GLOBAL = "FAANG_GLOBAL"
+    INDIAN_PRODUCT = "INDIAN_PRODUCT"
+    AI_STARTUP = "AI_STARTUP"
 
 
 class QuestionCategory(StrEnum):
@@ -31,6 +45,9 @@ class QuestionCategory(StrEnum):
     SQL = "SQL"
     PYTHON = "PYTHON"
     ML_SYSTEM_DESIGN = "ML_SYSTEM_DESIGN"
+    ML_BREADTH = "ML_BREADTH"
+    ML_DEPTH = "ML_DEPTH"
+    GENERATIVE_AI = "GENERATIVE_AI"
 
 
 # ---------------------------------------------------------------------------
@@ -121,6 +138,8 @@ class SessionInitResponse(BaseModel):
     interview_mode: InterviewMode
     target_role: str
     target_company: str
+    company_archetype: str = "FAANG_GLOBAL"
+    enable_live_web_search: bool = False
     claim_graph: CandidateClaimGraph | None = None
     initial_stage: InterviewStage
     created_at: datetime.datetime
@@ -135,6 +154,8 @@ class SessionDetailResponse(BaseModel):
     fsm_state: InterviewStage
     target_role: str
     target_company: str
+    company_archetype: str = "FAANG_GLOBAL"
+    enable_live_web_search: bool = False
     claim_graph: CandidateClaimGraph | None = None
     created_at: datetime.datetime
     active_question: QuestionItem | None = None
@@ -216,3 +237,16 @@ class ClientWorkingStatePayload(BaseModel):
 
     type: str = "working_state"
     is_active: bool
+
+
+class ClientInterruptPayload(BaseModel):
+    """Barge-in signal indicating candidate has interrupted ongoing interviewer speech."""
+
+    type: str = "interrupt"
+
+
+class ClientSilencePingPayload(BaseModel):
+    """Ping indicating candidate has been silent and may need encouragement or hint."""
+
+    type: str = "silence_ping"
+    seconds_silent: int = 18

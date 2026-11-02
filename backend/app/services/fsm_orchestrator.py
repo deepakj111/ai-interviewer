@@ -14,6 +14,9 @@ STAGE_BUDGETS_SECONDS: dict[InterviewStage, int] = {
     InterviewStage.RESUME_DEEP_DIVE: 600,  # 10 minutes
     InterviewStage.LIVE_CODING_SQL_PYTHON: 720,  # 12 minutes
     InterviewStage.ML_SYSTEM_DESIGN: 600,  # 10 minutes
+    InterviewStage.ML_BREADTH: 1200,  # 20 minutes
+    InterviewStage.ML_DEPTH: 1200,  # 20 minutes
+    InterviewStage.GENERATIVE_AI: 1200,  # 20 minutes
     InterviewStage.WRAP_UP: 120,  # 2 minutes
 }
 
@@ -38,6 +41,21 @@ MODE_STAGES: dict[InterviewMode, list[InterviewStage]] = {
     InterviewMode.ML_SYSTEM_DESIGN: [
         InterviewStage.INTRO,
         InterviewStage.ML_SYSTEM_DESIGN,
+        InterviewStage.WRAP_UP,
+    ],
+    InterviewMode.ML_BREADTH: [
+        InterviewStage.INTRO,
+        InterviewStage.ML_BREADTH,
+        InterviewStage.WRAP_UP,
+    ],
+    InterviewMode.ML_DEPTH: [
+        InterviewStage.INTRO,
+        InterviewStage.ML_DEPTH,
+        InterviewStage.WRAP_UP,
+    ],
+    InterviewMode.GENERATIVE_AI_LLM: [
+        InterviewStage.INTRO,
+        InterviewStage.GENERATIVE_AI,
         InterviewStage.WRAP_UP,
     ],
 }
@@ -178,6 +196,27 @@ class InterviewFSM:
                     "You have an interactive design whiteboard available on the right. "
                     "Walk me through your high-level architecture and how you plan to handle latency and throughput requirements."
                 )
+        elif new_stage == InterviewStage.ML_BREADTH:
+            transition_announcement = (
+                "Now we'll transition to our ML Breadth evaluation. "
+                "In this round, we'll move rapidly across core foundational machine learning concepts: "
+                "bias-variance trade-offs, loss formulations, regularization, feature engineering, and evaluation metrics. "
+                "Let's jump straight in: how do you systematically choose between L1 and L2 regularization for high-dimensional sparse features?"
+            )
+        elif new_stage == InterviewStage.ML_DEPTH:
+            transition_announcement = (
+                "Now we'll transition to our ML Depth round. "
+                "Here we'll go deep into the mathematical mechanics, derivations, and internal architectural trade-offs. "
+                "Let's start with loss optimization: walk me through the analytical gradient derivation for binary cross-entropy with a sigmoid activation, "
+                "and explain why saturated sigmoids lead to vanishing gradients."
+            )
+        elif new_stage == InterviewStage.GENERATIVE_AI:
+            transition_announcement = (
+                "Now we'll move into our Generative AI and LLM Systems round. "
+                "We'll explore modern LLM architectures, fine-tuning methodologies, RAG retrieval pipelines, and low-latency inference serving. "
+                "To begin: when building an enterprise RAG system with high-precision compliance requirements, "
+                "how do you architect your chunking, hybrid retrieval, and re-ranking pipeline to minimize hallucinations?"
+            )
         elif new_stage == InterviewStage.WRAP_UP:
             transition_announcement = (
                 "That concludes the technical evaluation segments of our interview today. "

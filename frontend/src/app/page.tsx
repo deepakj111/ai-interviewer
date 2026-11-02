@@ -17,6 +17,7 @@ import {
   UploadCloud,
   Radio,
   UserCheck,
+  Globe,
 } from "lucide-react";
 import { INTERVIEWER_PERSONAS, voiceManager } from "@/lib/voiceManager";
 
@@ -27,8 +28,10 @@ export default function OnboardingPage() {
   const [selectedPersonaId, setSelectedPersonaId] = useState("elena");
   const [isTestingVoice, setIsTestingVoice] = useState(false);
   const [targetRole, setTargetRole] = useState("Senior Machine Learning Engineer");
-  const [targetCompany, setTargetCompany] = useState("Google");
-  const [interviewMode, setInterviewMode] = useState("SQL_PYTHON_CODING");
+  const [targetCompany, setTargetCompany] = useState("Swiggy");
+  const [companyArchetype, setCompanyArchetype] = useState("INDIAN_PRODUCT");
+  const [enableLiveWebSearch, setEnableLiveWebSearch] = useState(true);
+  const [interviewMode, setInterviewMode] = useState("ML_BREADTH");
   const [jobDescription, setJobDescription] = useState("");
   const [resumeFile, setResumeFile] = useState<File | null>(null);
   const [availableQuestions, setAvailableQuestions] = useState<any[]>([]);
@@ -62,15 +65,33 @@ export default function OnboardingPage() {
   const handleRemoveResume = () => {
     setResumeFile(null);
     if (interviewMode === "FULL_LOOP" || interviewMode === "RESUME_DEEP_DIVE") {
-      setInterviewMode("SQL_PYTHON_CODING");
+      setInterviewMode("ML_BREADTH");
     }
+  };
+
+  const companyPresets = [
+    { name: "Swiggy", archetype: "INDIAN_PRODUCT", role: "Senior Machine Learning Engineer" },
+    { name: "Zomato", archetype: "INDIAN_PRODUCT", role: "Senior Applied Scientist" },
+    { name: "CRED", archetype: "INDIAN_PRODUCT", role: "Senior Data Scientist" },
+    { name: "Razorpay", archetype: "INDIAN_PRODUCT", role: "Staff Machine Learning Engineer" },
+    { name: "Flipkart", archetype: "INDIAN_PRODUCT", role: "Senior Applied Scientist" },
+    { name: "Google", archetype: "FAANG_GLOBAL", role: "Senior Machine Learning Engineer" },
+    { name: "Meta", archetype: "FAANG_GLOBAL", role: "Research / Applied Scientist" },
+    { name: "Stripe", archetype: "FAANG_GLOBAL", role: "Staff Infrastructure Engineer" },
+    { name: "AI Startup", archetype: "AI_STARTUP", role: "Lead AI / LLM Engineer" },
+  ];
+
+  const handleSelectPreset = (preset: { name: string; archetype: string; role: string }) => {
+    setTargetCompany(preset.name);
+    setCompanyArchetype(preset.archetype);
+    setTargetRole(preset.role);
   };
 
   const handleStartInterview = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
     if ((interviewMode === "FULL_LOOP" || interviewMode === "RESUME_DEEP_DIVE") && !resumeFile) {
-      setErrorMsg("Please upload a PDF resume for tracks with Resume Probing, or select SQL & Python Coding / ML System Design.");
+      setErrorMsg("Please upload a PDF resume for tracks with Resume Probing, or select ML Breadth, ML Depth, GenAI, or Coding.");
       setIsLoading(false);
       return;
     }
@@ -87,6 +108,8 @@ export default function OnboardingPage() {
       }
       formData.append("target_role", targetRole);
       formData.append("target_company", targetCompany);
+      formData.append("company_archetype", companyArchetype);
+      formData.append("enable_live_web_search", enableLiveWebSearch ? "true" : "false");
       formData.append("interview_mode", interviewMode);
       if (jobDescription.trim()) {
         formData.append("job_description", jobDescription.trim());
@@ -120,17 +143,31 @@ export default function OnboardingPage() {
   const modes = [
     {
       id: "FULL_LOOP",
-      title: "Full Loop (Complete)",
-      desc: "All 5 stages: Intro → Resume Probing → Coding (SQL/Python) → ML System Design → Wrap-Up",
+      title: "Full Loop (Comprehensive)",
+      desc: "Complete 45-min loop: Intro → Resume Probing → Coding (SQL/Python) → ML System Design → Wrap-Up",
       icon: Layers,
       requiresResume: true,
     },
     {
-      id: "RESUME_DEEP_DIVE",
-      title: "Resume Bar-Raiser",
-      desc: "3-layer grilling probes on technical metrics, leakage, latency SLAs, and drift",
-      icon: FileText,
-      requiresResume: true,
+      id: "ML_BREADTH",
+      title: "ML Breadth Round",
+      desc: "Rapid-fire foundational ML: bias-variance, regularizations (L1/L2), loss formulations, trees vs nets, and metrics",
+      icon: Layers,
+      requiresResume: false,
+    },
+    {
+      id: "ML_DEPTH",
+      title: "ML Depth Round",
+      desc: "Deep mathematical derivations: analytical loss gradients, attention matrices, FlashAttention, and LoRA mechanics",
+      icon: Cpu,
+      requiresResume: false,
+    },
+    {
+      id: "GENERATIVE_AI_LLM",
+      title: "Generative AI & LLM Track",
+      desc: "Production GenAI: RAG chunking & hybrid retrieval, LoRA/DPO fine-tuning, KV cache optimization, and guardrails",
+      icon: Sparkles,
+      requiresResume: false,
     },
     {
       id: "SQL_PYTHON_CODING",
@@ -145,6 +182,13 @@ export default function OnboardingPage() {
       desc: "Interactive architecture whiteboard for high-throughput feature stores and ranking funnels",
       icon: Cpu,
       requiresResume: false,
+    },
+    {
+      id: "RESUME_DEEP_DIVE",
+      title: "Resume Bar-Raiser",
+      desc: "3-layer grilling probes on technical metrics, leakage, latency SLAs, and drift",
+      icon: FileText,
+      requiresResume: true,
     },
   ];
 
@@ -210,34 +254,131 @@ export default function OnboardingPage() {
             />
           </div>
 
-          {/* Section 2: Target Position & Company */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="p-5 rounded-2xl glass-panel border border-slate-800 bg-slate-900/60">
-              <label className="text-xs font-bold uppercase tracking-wider text-slate-300 block mb-2">
-                Target Role
-              </label>
-              <input
-                type="text"
-                required
-                value={targetRole}
-                onChange={(e) => setTargetRole(e.target.value)}
-                placeholder="e.g. Senior Machine Learning Engineer"
-                className="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-slate-200 focus:outline-none focus:border-blue-500"
-              />
+          {/* Section 2: Target Position, Company & Engineering Archetype */}
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="p-5 rounded-2xl glass-panel border border-slate-800 bg-slate-900/60">
+                <label className="text-xs font-bold uppercase tracking-wider text-slate-300 block mb-2">
+                  Target Role
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={targetRole}
+                  onChange={(e) => setTargetRole(e.target.value)}
+                  placeholder="e.g. Senior Machine Learning Engineer"
+                  className="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-slate-200 focus:outline-none focus:border-blue-500"
+                />
+              </div>
+
+              <div className="p-5 rounded-2xl glass-panel border border-slate-800 bg-slate-900/60">
+                <label className="text-xs font-bold uppercase tracking-wider text-slate-300 block mb-2">
+                  Target Company
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={targetCompany}
+                  onChange={(e) => setTargetCompany(e.target.value)}
+                  placeholder="e.g. Swiggy, CRED, Google, Stripe"
+                  className="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-slate-200 focus:outline-none focus:border-blue-500"
+                />
+              </div>
             </div>
 
-            <div className="p-5 rounded-2xl glass-panel border border-slate-800 bg-slate-900/60">
-              <label className="text-xs font-bold uppercase tracking-wider text-slate-300 block mb-2">
-                Target Company
-              </label>
-              <input
-                type="text"
-                required
-                value={targetCompany}
-                onChange={(e) => setTargetCompany(e.target.value)}
-                placeholder="e.g. Google, Stripe, Meta, Netflix"
-                className="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-slate-200 focus:outline-none focus:border-blue-500"
-              />
+            {/* Quick Company Presets */}
+            <div className="flex flex-wrap items-center gap-1.5 px-1">
+              <span className="text-[11px] font-semibold text-slate-400 mr-1">Quick Presets:</span>
+              {companyPresets.map((preset) => (
+                <button
+                  key={preset.name}
+                  type="button"
+                  onClick={() => handleSelectPreset(preset)}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all border ${
+                    targetCompany.toLowerCase() === preset.name.toLowerCase()
+                      ? "bg-blue-600/30 border-blue-500 text-blue-200"
+                      : "bg-slate-900/80 border-slate-800 hover:border-slate-700 text-slate-400 hover:text-slate-200"
+                  }`}
+                >
+                  {preset.name}
+                </button>
+              ))}
+            </div>
+
+            {/* Company Archetype Cards */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-1">
+              {[
+                {
+                  id: "INDIAN_PRODUCT",
+                  title: "🇮🇳 Indian Product Tech",
+                  subtitle: "Swiggy, CRED, Zomato, Razorpay, Flipkart",
+                  desc: "Hyperlocal delivery surges, UPI fraud, high concurrency, pragmatic unit economics",
+                },
+                {
+                  id: "FAANG_GLOBAL",
+                  title: "🏢 Global Tech / FAANG",
+                  subtitle: "Google, Meta, Stripe, Netflix, Uber",
+                  desc: "Massive distributed scale, formal p99 latency SLAs, theoretical statistical depth",
+                },
+                {
+                  id: "AI_STARTUP",
+                  title: "🚀 AI Startups & Labs",
+                  subtitle: "Perplexity, Cursor, Agentic AI, Series A-C",
+                  desc: "Rapid zero-to-one velocity, vLLM cost optimization, agent tool-calling, pragmatism",
+                },
+              ].map((arch) => {
+                const isSelected = companyArchetype === arch.id;
+                return (
+                  <div
+                    key={arch.id}
+                    onClick={() => setCompanyArchetype(arch.id)}
+                    className={`p-3.5 rounded-xl border transition-all cursor-pointer ${
+                      isSelected
+                        ? "bg-blue-600/10 border-blue-500 shadow-md shadow-blue-500/10"
+                        : "bg-slate-900/40 border-slate-800 hover:border-slate-700"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-xs font-bold text-slate-200">{arch.title}</span>
+                      {isSelected && <CheckCircle className="w-3.5 h-3.5 text-blue-400" />}
+                    </div>
+                    <span className="text-[11px] text-blue-400 font-medium block mb-1">
+                      {arch.subtitle}
+                    </span>
+                    <p className="text-[11px] text-slate-400 leading-snug">{arch.desc}</p>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Gemini Native Google Search Grounding Toggle */}
+            <div className="flex items-center justify-between p-3.5 rounded-xl bg-slate-900/70 border border-slate-800">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-lg bg-blue-600/20 text-blue-400 border border-blue-500/30">
+                  <Globe className="w-4 h-4" />
+                </div>
+                <div>
+                  <span className="text-xs font-semibold text-slate-200 block">
+                    Gemini Google Search Grounding (Live 2025/2026 Questions)
+                  </span>
+                  <span className="text-[11px] text-slate-400">
+                    Use native Gemini search tool to pull recently asked actual interview questions for {targetCompany}
+                  </span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEnableLiveWebSearch(!enableLiveWebSearch)}
+                className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                  enableLiveWebSearch ? "bg-blue-600" : "bg-slate-800"
+                }`}
+              >
+                <span
+                  className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                    enableLiveWebSearch ? "translate-x-4" : "translate-x-0"
+                  }`}
+                />
+              </button>
             </div>
           </div>
 

@@ -468,6 +468,84 @@ docker compose up --build
 
 > **Note on Port Allocation:** The Docker frontend defaults to port `3001` (`3001:3000`) to avoid collisions with other host services (like Grafana). You can customize it by setting `FRONTEND_PORT=3000` if port 3000 is free.
 
+## 🤖 2026 Agentic Architecture & Behavioral Flow
+
+The interviewer is engineered with a multi-turn, stateful **Agentic Interviewer** (`AgenticInterviewer`) designed to replicate the spontaneous, conversational rigor of top human technical interviewers:
+
+```
+[Candidate Action / Voice / Code]
+               │
+               ▼
+┌──────────────────────────────────────────────┐
+│       Acoustic Echo Guard & Barge-In         │
+│ • Discards mic self-echo while speaking      │
+│ • Instant speech cancellation on barge-in    │
+└──────────────────────┬───────────────────────┘
+                       │
+                       ▼
+┌──────────────────────────────────────────────┐
+│         Agentic Interviewer Engine           │
+│ • Dynamic persona self-introduction          │
+│ • Trajectory-aware probing & follow-ups      │
+│ • Track-specialized prompts (Breadth/Depth)  │
+│ • Human-like silence & patience monitoring   │
+└──────────────────────┬───────────────────────┘
+                       │
+                       ▼
+┌──────────────────────────────────────────────┐
+│  Gemini 2.5 Live + Google Search Grounding   │
+│ • Real-time 2025/2026 interview questions    │
+│ • Native types.GoogleSearch() (No 3rd-party) │
+│ • Dual fallback for Indian tech & AI startups│
+└──────────────────────────────────────────────┘
+```
+
+### 1. Dynamic Human Self-Introduction
+Rather than jumping abruptly into static problem statements, the interviewer introduces themselves dynamically with their name, role, and engineering team at the target company (e.g., *"Hi, I'm Maya from the ML Platform team at Swiggy. Today we'll do an ML Breadth sprint focused on ranking metrics, loss functions, and latency optimizations."*), sets clear expectations, and warmly opens the floor for introductions.
+
+### 2. Instant Barge-In / Interruption
+Candidates are not held hostage by a pre-recorded monologue. Candidates can **interrupt at any moment** by speaking, typing, or clicking the **Cut In / Speak** button. The interviewer immediately halts speech synthesis, stops audio chunk playback, and listens attentively.
+
+### 3. Acoustic Self-Echo Guard
+Speech recognition incorporates an intelligent 1000ms acoustic guard window. Audio received from the microphone while the interviewer is speaking is discarded, completely eliminating the robotic infinite self-echo loop.
+
+### 4. Attentive Silence & Patience Detection
+If a candidate pauses for 25–45 seconds to think through a derivation or system architecture, the interviewer does not blabber or prematurely interrupt. A comforting reassurance banner appears (*"Take your time to structure your thoughts, or speak up whenever you're ready"*), with one-click access to hints or constraint clarifications.
+
+---
+
+## 🎯 7 Specialized Interview Tracks
+
+Prepare holistically for any stage in an engineering recruitment pipeline:
+
+1. **Full Comprehensive Loop (5 Stages):** Intro → Resume Deep Dive → SQL/Python Coding → ML System Design → Behavioral Bar-Raiser.
+2. **Pure ML Breadth Sprint:** Fast-paced, wide-ranging foundational & applied ML concepts (AUC-ROC vs PR, bias-variance tradeoffs, L1 vs L2 regularization, XGBoost vs Neural Nets, Adam vs AdamW, vanishing gradients).
+3. **Pure ML Depth & Theory:** Deep mathematical derivations, loss formulation (triplet loss, infoNCE), backprop through attention, FlashAttention tiling mechanics, LoRA low-rank updates.
+4. **Generative AI & LLM Engineering:** Production LLM architectures, RAG chunking & hybrid dense/sparse retrieval, LoRA vs DPO fine-tuning, KV cache optimization, vLLM PagedAttention, tool calling, and guardrails.
+5. **Live Coding (Python + SQL):** In-browser Monaco editor with Pyodide Python WASM execution and DuckDB in-memory SQL sandbox.
+6. **ML System Design:** Excalidraw-powered interactive canvas with real-time architectural component vision analysis.
+7. **Resume & Project Deep Dive:** Automated parsing of candidate resumes with targeted probing of reported claims, metrics, and trade-offs.
+
+---
+
+## 🌐 Holistic Industry Archetypes
+
+Prepare for real-world interviews across diverse market segments:
+
+- 🇮🇳 **Indian Product Tech:** Tailored scenarios for Swiggy, Zomato, CRED, Razorpay, Flipkart, and Zepto (handling IPL order surges, hyperlocal delivery dispatch algorithms, bilingual search ranking, UPI fraud detection, and 10-minute dark store route optimization).
+- 🚀 **AI Startups & Frontier Labs:** Fast-paced velocity, zero-to-one architecture, vLLM cost optimization, agentic tool workflows, and low-latency inference.
+- 🏢 **Global Tech & FAANG:** Google, Meta, Amazon, Microsoft, Netflix, Apple, and Stripe bar-raiser rigor.
+
+---
+
+## 🔍 Native Gemini Google Search Grounding
+
+To guarantee questions reflect actual 2025/2026 industry interviews, the platform integrates **Gemini Native Google Search Grounding**:
+- Uses official Gemini API tools (`types.Tool(google_search=types.GoogleSearch())`).
+- Requires **no third-party search subscriptions** (no Tavily or DuckDuckGo API keys required).
+- Grounds interview questions in real reported interview experiences for the specific company and role.
+- Backed by an offline curated real-world repository for Indian product unicorns and AI labs when offline or running in mock mode.
+
 ---
 
 ## 🧪 Testing & Quality Assurance
@@ -479,7 +557,7 @@ The codebase adheres to rigorous engineering standards with full test coverage a
 ruff check backend/
 ruff format --check backend/
 
-# Run complete pytest test suite (24 tests)
+# Run complete pytest test suite (29 tests)
 pytest backend/tests/ -v
 
 # Run frontend type checking & production build
