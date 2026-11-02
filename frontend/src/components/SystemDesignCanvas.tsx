@@ -8,7 +8,7 @@ interface SystemDesignCanvasProps {
   onWorkingStateChange?: (isActive: boolean) => void;
 }
 
-type ToolMode = "pen" | "rect" | "arrow" | "text" | "eraser";
+type ToolMode = "pen" | "rect" | "circle" | "arrow" | "text" | "eraser";
 
 export default function SystemDesignCanvas({
   onSnapshot,
@@ -93,12 +93,57 @@ export default function SystemDesignCanvas({
     }
   };
 
+  const [textInput, setTextInput] = useState("");
+  const [textPos, setTextPos] = useState<{ x: number; y: number } | null>(null);
+  const [snapshotSent, setSnapshotSent] = useState(false);
+  const textInputRef = useRef<HTMLInputElement>(null);
+
+  // Focus input when textPos is set
+  useEffect(() => {
+    if (textPos && textInputRef.current) {
+      textInputRef.current.focus();
+    }
+  }, [textPos]);
+
+  const commitText = () => {
+    if (!textPos || !textInput.trim()) {
+      setTextPos(null);
+      setTextInput("");
+      return;
+    }
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    ctx.font = "bold 14px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
+    const metrics = ctx.measureText(textInput);
+    const padding = 6;
+    ctx.fillStyle = "rgba(15, 23, 42, 0.85)";
+    ctx.fillRect(textPos.x - padding, textPos.y - 14 - padding, metrics.width + padding * 2, 20 + padding);
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.15)";
+    ctx.lineWidth = 1;
+    ctx.strokeRect(textPos.x - padding, textPos.y - 14 - padding, metrics.width + padding * 2, 20 + padding);
+
+    ctx.fillStyle = color;
+    ctx.fillText(textInput, textPos.x, textPos.y);
+
+    setTextPos(null);
+    setTextInput("");
+    scheduleDebouncedSnapshot();
+  };
+
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const rect = canvas.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
+
+    if (tool === "text") {
+      setTextPos({ x, y });
+      return;
+    }
 
     setIsDrawing(true);
     setStartPos({ x, y });
@@ -154,6 +199,16 @@ export default function SystemDesignCanvas({
         ctx.strokeStyle = color;
         ctx.lineWidth = 2;
         ctx.strokeRect(startPos.x, startPos.y, x - startPos.x, y - startPos.y);
+      } else if (tool === "circle") {
+        const radiusX = Math.abs(x - startPos.x) / 2;
+        const radiusY = Math.abs(y - startPos.y) / 2;
+        const centerX = Math.min(startPos.x, x) + radiusX;
+        const centerY = Math.min(startPos.y, y) + radiusY;
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.ellipse(centerX, centerY, radiusX, radiusY, 0, 0, 2 * Math.PI);
+        ctx.stroke();
       } else if (tool === "arrow") {
         ctx.strokeStyle = color;
         ctx.fillStyle = color;
@@ -185,6 +240,21 @@ export default function SystemDesignCanvas({
     const rect = canvas.getBoundingClientRect();
     drawGrid(ctx, rect.width, rect.height);
     scheduleDebouncedSnapshot();
+  };
+
+  const handleDownload = () => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const link = document.createElement("a");
+    link.download = "system-design-architecture.png";
+    link.href = canvas.toDataURL("image/png");
+    link.click();
+  };
+
+  const handleSnapshotManual = () => {
+    emitSnapshot();
+    setSnapshotSent(true);
+    setTimeout(() => setSnapshotSent(false), 2000);
   };
 
   return (
@@ -221,6 +291,19 @@ export default function SystemDesignCanvas({
 
           <button
             type="button"
+            onClick={() => setTool("circle")}
+            className={`p-2 rounded-lg text-xs font-medium transition-colors ${
+              tool === "circle"
+                ? "bg-blue-600 text-white"
+                : "bg-slate-800 text-slate-300 hover:bg-slate-700"
+            }`}
+            title="Circle (Database / Storage)"
+          >
+            <Circle className="w-4 h-4" />
+          </button>
+
+          <button
+            type="button"
             onClick={() => setTool("arrow")}
             className={`p-2 rounded-lg text-xs font-medium transition-colors ${
               tool === "arrow"
@@ -230,6 +313,19 @@ export default function SystemDesignCanvas({
             title="Arrow (Data Flow)"
           >
             <ArrowRight className="w-4 h-4" />
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setTool("text")}
+            className={`p-2 rounded-lg text-xs font-medium transition-colors ${
+              tool === "text"
+                ? "bg-blue-600 text-white"
+                : "bg-slate-800 text-slate-300 hover:bg-slate-700"
+            }`}
+            title="Text Label (Click canvas to place)"
+          >
+            <Type className="w-4 h-4" />
           </button>
 
           <button
@@ -246,7 +342,7 @@ export default function SystemDesignCanvas({
           </button>
         </div>
 
-        {/* Color Palette */}
+        {/* Color Palette & Actions */}
         <div className="flex items-center gap-2">
           {["#38bdf8", "#34d399", "#fbbf24", "#f43f5e", "#c084fc", "#ffffff"].map((c) => (
             <button
@@ -262,6 +358,12 @@ export default function SystemDesignCanvas({
 
           <div className="h-4 w-px bg-slate-800 mx-1" />
 
+          {snapshotSent && (
+            <span className="text-[11px] text-emerald-400 font-medium px-2 py-0.5 rounded-full bg-emerald-950/60 border border-emerald-800/40 animate-pulse">
+              AI Synced
+            </span>
+          )}
+
           <button
             type="button"
             onClick={clearCanvas}
@@ -273,11 +375,21 @@ export default function SystemDesignCanvas({
 
           <button
             type="button"
-            onClick={emitSnapshot}
-            className="p-1.5 rounded-lg bg-slate-800 text-slate-300 hover:bg-blue-600 hover:text-white transition-colors"
-            title="Send Snapshot to AI"
+            onClick={handleDownload}
+            className="p-1.5 rounded-lg bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
+            title="Download Diagram (PNG)"
+          >
+            <Download className="w-4 h-4" />
+          </button>
+
+          <button
+            type="button"
+            onClick={handleSnapshotManual}
+            className="p-1.5 rounded-lg bg-slate-800 text-slate-300 hover:bg-blue-600 hover:text-white transition-colors flex items-center gap-1 text-xs"
+            title="Send Diagram Snapshot to AI"
           >
             <Camera className="w-4 h-4" />
+            <span className="hidden sm:inline">Sync AI</span>
           </button>
         </div>
       </div>
@@ -291,6 +403,40 @@ export default function SystemDesignCanvas({
           onMouseUp={handleMouseUp}
           className="w-full h-full block"
         />
+
+        {/* Inline Text Input Overlay when Text Tool is active and user clicked */}
+        {textPos && (
+          <div
+            className="absolute z-20 flex items-center gap-1.5 bg-slate-900 border border-blue-500 rounded-lg p-1.5 shadow-xl"
+            style={{
+              left: Math.min(textPos.x, (canvasRef.current?.clientWidth || 400) - 180),
+              top: Math.max(10, textPos.y - 20),
+            }}
+          >
+            <input
+              ref={textInputRef}
+              type="text"
+              value={textInput}
+              onChange={(e) => setTextInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") commitText();
+                if (e.key === "Escape") {
+                  setTextPos(null);
+                  setTextInput("");
+                }
+              }}
+              placeholder="Label (e.g. Kafka, Redis)..."
+              className="bg-slate-950 text-white text-xs px-2 py-1 rounded outline-none border border-slate-700 w-36"
+            />
+            <button
+              type="button"
+              onClick={commitText}
+              className="px-2 py-1 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded transition-colors"
+            >
+              Add
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

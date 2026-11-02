@@ -180,6 +180,17 @@ export default function InterviewRoomPage() {
     );
   };
 
+  // Interviewer Thinking state
+  const [isInterviewerThinking, setIsInterviewerThinking] = useState(false);
+
+  const STAGES_PIPELINE = [
+    { id: "INTRO", label: "Intro" },
+    { id: "RESUME_DEEP_DIVE", label: "Resume" },
+    { id: "LIVE_CODING_SQL_PYTHON", label: "Coding" },
+    { id: "ML_SYSTEM_DESIGN", label: "Design" },
+    { id: "BEHAVIORAL_BAR_RAISER", label: "Wrap-up" },
+  ];
+
   // Browser SpeechRecognition for Candidate Microphone
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -200,6 +211,7 @@ export default function InterviewRoomPage() {
             const transcript = last[0].transcript.trim();
             if (transcript && socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
               setTranscripts((prev) => [...prev, { speaker: "candidate", text: transcript }]);
+              setIsInterviewerThinking(true);
               socketRef.current.send(
                 JSON.stringify({
                   type: "text_turn",
@@ -280,7 +292,16 @@ export default function InterviewRoomPage() {
           if (msg.data.active_question) {
             setActiveQuestion(msg.data.active_question);
           }
+          // Automatically focus appropriate workbench tab when stage advances
+          if (msg.data.current_stage === "LIVE_CODING_SQL_PYTHON") {
+            setActiveTab("code");
+          } else if (msg.data.current_stage === "ML_SYSTEM_DESIGN") {
+            setActiveTab("canvas");
+          } else if (msg.data.current_stage === "BEHAVIORAL_BAR_RAISER") {
+            setActiveTab("prompt");
+          }
         } else if (msg.type === "transcript_caption") {
+          setIsInterviewerThinking(false);
           setLatestCaption(msg.text);
           setTranscripts((prev) => [...prev, { speaker: msg.speaker, text: msg.text }]);
           if (msg.speaker === "interviewer") {
@@ -313,6 +334,7 @@ export default function InterviewRoomPage() {
     if (!text) return;
 
     if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+      setIsInterviewerThinking(true);
       socketRef.current.send(
         JSON.stringify({
           type: "text_turn",
@@ -327,6 +349,7 @@ export default function InterviewRoomPage() {
   const handleSendDirectPrompt = (prompt: string) => {
     if (!prompt.trim()) return;
     if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+      setIsInterviewerThinking(true);
       socketRef.current.send(
         JSON.stringify({
           type: "text_turn",
@@ -352,6 +375,7 @@ export default function InterviewRoomPage() {
 
   const handleCodeExecuted = (payload: { language: string; code: string; stdout: string; error?: string }) => {
     if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+      setIsInterviewerThinking(true);
       socketRef.current.send(
         JSON.stringify({
           type: "code_update",
@@ -386,6 +410,13 @@ export default function InterviewRoomPage() {
           ...prev,
           current_stage: data.new_stage,
         }));
+        if (data.new_stage === "LIVE_CODING_SQL_PYTHON") {
+          setActiveTab("code");
+        } else if (data.new_stage === "ML_SYSTEM_DESIGN") {
+          setActiveTab("canvas");
+        } else if (data.new_stage === "BEHAVIORAL_BAR_RAISER") {
+          setActiveTab("prompt");
+        }
       }
     } catch (e) {
       console.error(e);
@@ -396,6 +427,9 @@ export default function InterviewRoomPage() {
     voiceManager.cancel();
     router.push(`/report/${sessionId}`);
   };
+
+  const currentStageName = fsmSnapshot?.current_stage || "INTRO";
+  const currentStageIdx = STAGES_PIPELINE.findIndex((s) => s.id === currentStageName);
 
   return (
     <div className="flex flex-col h-screen bg-slate-950 text-slate-100 overflow-hidden select-none">
@@ -417,15 +451,30 @@ export default function InterviewRoomPage() {
             <span>{formatTime(elapsedSeconds)}</span>
           </div>
 
-          {/* FSM Stage Badge */}
-          <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-slate-900 border border-slate-800 text-xs">
-            <Layers className="w-3.5 h-3.5 text-blue-400" />
-            <span className="text-slate-300 font-medium">
-              Stage {fsmSnapshot?.stage_index || 1}/{fsmSnapshot?.total_stages || 5}:{" "}
-              <strong className="text-white">
-                {(fsmSnapshot?.current_stage || "INTRO").replace(/_/g, " ")}
-              </strong>
-            </span>
+          {/* Visual Stage Stepper Pipeline */}
+          <div className="hidden lg:flex items-center gap-1 px-2.5 py-1 rounded-full bg-slate-900 border border-slate-800 text-[11px]">
+            {STAGES_PIPELINE.map((stage, idx) => {
+              const isPast = idx < currentStageIdx;
+              const isCurrent = idx === currentStageIdx;
+              return (
+                <div key={stage.id} className="flex items-center gap-1">
+                  <span
+                    className={`px-2 py-0.5 rounded-full font-medium transition-colors ${
+                      isCurrent
+                        ? "bg-blue-600 text-white font-bold shadow-sm"
+                        : isPast
+                        ? "text-emerald-400"
+                        : "text-slate-500"
+                    }`}
+                  >
+                    {stage.label}
+                  </span>
+                  {idx < STAGES_PIPELINE.length - 1 && (
+                    <span className="text-slate-700 text-[9px] font-bold">›</span>
+                  )}
+                </div>
+              );
+            })}
           </div>
 
           {/* Typing / Thinking Hold Indicator */}
@@ -562,6 +611,15 @@ export default function InterviewRoomPage() {
                   </div>
                 ))
               )}
+
+              {/* Real-time Interviewer Thinking Indicator */}
+              {isInterviewerThinking && (
+                <div className="p-2 rounded-xl text-xs bg-blue-950/40 border border-blue-800/30 text-blue-300 flex items-center gap-2 animate-pulse">
+                  <span className="w-2 h-2 rounded-full bg-blue-400 animate-ping" />
+                  <span>{selectedPersona.name} is listening & formulating response...</span>
+                </div>
+              )}
+
               <div ref={transcriptEndRef} />
             </div>
 
@@ -570,7 +628,7 @@ export default function InterviewRoomPage() {
               <div className="flex flex-wrap items-center gap-1.5">
                 <button
                   type="button"
-                  onClick={() => handleSendDirectPrompt("Can you explain the question and requirements?")}
+                  onClick={() => handleSendDirectPrompt("Can you explain the question and requirements in detail?")}
                   className="px-2 py-0.5 rounded-md bg-slate-950 hover:bg-slate-800 border border-slate-800 text-[10px] text-slate-400 hover:text-slate-200 transition-colors"
                 >
                   Explain Question
@@ -584,14 +642,14 @@ export default function InterviewRoomPage() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => handleSendDirectPrompt("I'm thinking about the approach, can you give me a hint?")}
+                  onClick={() => handleSendDirectPrompt("I'm thinking about my approach, can you give me a hint?")}
                   className="px-2 py-0.5 rounded-md bg-slate-950 hover:bg-slate-800 border border-slate-800 text-[10px] text-slate-400 hover:text-slate-200 transition-colors"
                 >
                   Get Hint
                 </button>
               </div>
 
-              {/* Candidate Response Input Bar (Spoken or Typed) */}
+              {/* Candidate Response Input Bar (Spoken or Typed) with Mic State Indicator */}
               <form onSubmit={handleSendCandidateText} className="flex items-center gap-2">
                 <input
                   type="text"
@@ -600,6 +658,26 @@ export default function InterviewRoomPage() {
                   placeholder="Speak into microphone or type your answer..."
                   className="flex-1 bg-slate-950 border border-slate-800 focus:border-blue-500 rounded-xl px-3 py-1.5 text-xs text-slate-200 placeholder-slate-500 outline-none transition-colors"
                 />
+
+                {/* Mic Status Indicator Badge */}
+                {!isMicMuted ? (
+                  <div
+                    className="flex items-center gap-1 text-[10px] text-emerald-400 font-semibold px-2 py-1 rounded-lg bg-emerald-950/60 border border-emerald-800/40 shrink-0"
+                    title="Microphone is unmuted and listening"
+                  >
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                    <span className="hidden sm:inline">Listening</span>
+                  </div>
+                ) : (
+                  <div
+                    className="flex items-center gap-1 text-[10px] text-slate-500 font-medium px-2 py-1 rounded-lg bg-slate-900 border border-slate-800 shrink-0"
+                    title="Microphone is muted (typing mode)"
+                  >
+                    <span className="w-1.5 h-1.5 rounded-full bg-slate-600" />
+                    <span className="hidden sm:inline">Muted</span>
+                  </div>
+                )}
+
                 <button
                   type="submit"
                   disabled={!candidateInputText.trim()}
