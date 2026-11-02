@@ -242,7 +242,17 @@ class LiveInterviewSessionHandler:
                     logger.info("Candidate barge-in interruption received in live stream")
 
                 elif msg_type == "silence_ping":
-                    logger.info("Silence ping received in live stream")
+                    sec = message.get("seconds_silent", 30)
+                    logger.info("Silence ping (%ds) received in live stream, prompting AI", sec)
+                    directive = (
+                        f"[SYSTEM DIRECTIVE: The candidate has been silent for {sec} seconds. "
+                        f"Check in warmly and supportively. Remind them they can think out loud, ask clarifying questions, or request a hint. "
+                        f"Keep your response concise and conversational (1 to 2 sentences).]"
+                    )
+                    try:
+                        await session.send(input=directive, end_of_turn=True)
+                    except Exception as exc:
+                        logger.warning("Could not send silence directive to Gemini Live: %s", exc)
 
                 elif msg_type == "working_state":
                     is_active = message.get("is_active", False)
