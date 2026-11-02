@@ -55,10 +55,10 @@
 |  [Slow Loop: Async Shadow Supervisor]                                             |
 |   • Background depth checker: Injects silent interviewer follow-up probes         |
 |                                                                                   |
-|  [Curated 15-Problem Bank]                                                        |
-|   • 5 DuckDB SQL Window/Cohort Problems                                           |
-|   • 5 Python Algorithmic Problems with Unit Tests                                 |
-|   • 5 ML System Design Prompts with Detailed Rubrics                              |
+|  [Curated 21-Problem Bank with In-Session Switching]                               |
+|   • 7 DuckDB SQL Window/Cohort Problems                                           |
+|   • 7 Python Algorithmic Problems with Unit Tests                                 |
+|   • 7 ML System Design Prompts with Detailed Rubrics                              |
 |                                                                                   |
 |  [Local SQLite Database]                                                          |
 |   • Sessions, Transcripts, and BARS Scorecards                                    |
@@ -82,13 +82,13 @@ ai-interviewer/
 │   │   │   ├── gemini_live.py        # Fast Loop: Gemini Multimodal Live multiplexer
 │   │   │   ├── shadow_supervisor.py  # Slow Loop: Async depth checker & probe injector
 │   │   │   ├── rubric_evaluator.py   # Post-interview BARS grader & STAR rewriter
-│   │   │   └── question_bank.py      # 15 Curated DS/ML problems with DuckDB seeds
+│   │   │   └── question_bank.py      # 21 Curated DS/ML problems with DuckDB seeds
 │   │   ├── prompts/
 │   │   │   ├── interviewer_system.py # Anti-sycophantic Bar-Raiser system prompt
 │   │   │   ├── supervisor_system.py  # Shadow evaluator instructions
 │   │   │   └── grader_system.py      # Constructive mentor & BARS rubric prompt
 │   │   └── main.py                   # FastAPI application, CORS, REST & WS endpoints
-│   ├── tests/                        # 19 Pytest integration & unit tests
+│   ├── tests/                        # 24 Pytest integration & unit tests
 │   ├── pyproject.toml                # Ruff & Pytest configuration
 │   ├── requirements.txt              # Production Python dependencies
 │   └── Dockerfile                    # Multi-stage backend container
@@ -115,6 +115,255 @@ ai-interviewer/
 ├── docker-compose.yml                # Full-stack Docker deployment
 └── README.md
 ```
+
+---
+
+## 🤖 AI, LLM & Machine Learning Architecture
+
+The platform combines a **Dual-Loop Multiplexer Architecture** with client-side WebAssembly compute to balance real-time, conversational voice responsiveness (<600ms) with deep, asynchronous technical supervision and evaluation.
+
+### Architecture Topology & Execution Loops
+
+```text
+                                  +─────────────────────────────────────────+
+                                  |         Candidate Browser Audio         |
+                                  |         16kHz PCM Linear Stream         |
+                                  +────────────────────┬────────────────────+
+                                                       │ WebSocket
+                                                       ▼
+                                  +─────────────────────────────────────────+
+                                  |         FAST-LOOP REAL-TIME AGENT       |
+                                  |          (Gemini 2.0 Flash Live)        |
+                                  |  • Voice response latency: <600ms       |
+                                  |  • Anti-sycophantic Bar-Raiser persona  |
+                                  |  • Ingests Monaco code & Excalidraw     |
+                                  +────────────────────┬────────────────────+
+                                                       │
+                                   Transcripts & Diffs │ Background Ingestion
+                                                       ▼
++───────────────────────────────────+     +─────────────────────────────────────────+
+|     LOCAL WEBASSEMBLY ENGINES     |     |       SLOW-LOOP SHADOW SUPERVISOR       |
+|                                   |     |            (Gemini 2.5 Pro)             |
+| • DuckDB-WASM: In-browser SQL     |     | • Async evaluation every 3 turns        |
+| • Pyodide WASM: CPython + NumPy   |     | • Detects shallow math & O(N²) loops    |
+| • Web Audio: FFT Voice Halo       |     | • Injects silent interviewer probes     |
++───────────────────────────────────+     +────────────────────┬────────────────────+
+                                                               │
+                                               Session Summary │ Call Completed
+                                                               ▼
+                                          +─────────────────────────────────────────+
+                                          |       POST-INTERVIEW BARS GRADER        |
+                                          |        (Gemini 2.5 Pro / Flash)         |
+                                          | • 4-Dimension BARS Rubric (1-5)         |
+                                          | • Strengths, Weaknesses, Verdict        |
+                                          | • Staff-Level 60-Sec STAR Rewrites      |
+                                          +─────────────────────────────────────────+
+```
+
+### Comprehensive AI & ML Model Matrix
+
+| Component | Model / Engine | Modality & Flow | Latency SLA / Cadence | Implementation Source |
+| :--- | :--- | :--- | :--- | :--- |
+| **Fast-Loop Voice Agent** | `gemini-2.0-flash-exp` *(Gemini Live API)* | Bidirectional 16kHz PCM Audio In / 24kHz PCM Audio Out, Code Diffs, Canvas Frames | Sub-second (~300–600ms) | [`gemini_live.py`](file:///home/deepak/ai-interviewer/backend/app/services/gemini_live.py) |
+| **Resume Claim Extractor** | `gemini-2.5-flash` (`EXTRACTOR_MODEL`) | PDF text $\rightarrow$ Strict Pydantic JSON `CandidateClaimGraph` | One-shot on upload (~2s) | [`resume_parser.py`](file:///home/deepak/ai-interviewer/backend/app/services/resume_parser.py) |
+| **Conversational Bar-Raiser** | `gemini-2.5-flash` + Deterministic Fallback | Anti-sycophantic dialogue, hints, schema clarifications, real-time code reviews | Spoken turn cadence (~1s) | [`interviewer_engine.py`](file:///home/deepak/ai-interviewer/backend/app/services/interviewer_engine.py) |
+| **Shadow Supervisor** | `gemini-2.5-pro` (`SUPERVISOR_MODEL`) | Asynchronous background semantic depth checker & silent probe injector | Every 3 turns or on code run | [`shadow_supervisor.py`](file:///home/deepak/ai-interviewer/backend/app/services/shadow_supervisor.py) |
+| **BARS Rubric Grader** | `gemini-2.5-flash` / `gemini-2.5-pro` (`REASONING_MODEL`) | Complete transcript & code audit $\rightarrow$ 4 BARS dimensions & Staff STAR rewrites | End of interview (~5–8s) | [`rubric_evaluator.py`](file:///home/deepak/ai-interviewer/backend/app/services/rubric_evaluator.py) |
+| **In-Browser SQL Engine** | `DuckDB-WASM` | Relational OLAP query execution on pre-seeded memory tables | Local instant (<50ms) | [`duckdbRunner.ts`](file:///home/deepak/ai-interviewer/frontend/src/lib/duckdbRunner.ts) |
+| **In-Browser Python Engine** | `Pyodide WASM` + NumPy | CPython code execution against automated unit test assertion suites | Local fast (<200ms) | [`pyodideRunner.ts`](file:///home/deepak/ai-interviewer/frontend/src/lib/pyodideRunner.ts) |
+| **Deterministic Audio Halo** | Web Speech API + Web Audio `AnalyserNode` | Persona voice synthesis fallback + 60fps real-time audio FFT frequency halo | Local continuous (60fps) | [`voiceManager.ts`](file:///home/deepak/ai-interviewer/frontend/src/lib/voiceManager.ts) |
+
+---
+
+### Detailed Subsystem Breakdown
+
+#### 1. Fast-Loop Gemini Multimodal Live Voice Agent (`gemini-2.0-flash-exp`)
+- **WebSocket Protocol**: Connects via `client.aio.live.connect` using bidirectional audio streaming.
+- **Audio Processing Pipeline**: 
+  - *Microphone Ingestion*: Captured at 16kHz PCM mono via the browser `ScriptProcessorNode` / `AudioWorklet` and streamed in 512-sample chunks.
+  - *Speech Synthesis Out*: Emits raw 24kHz linear PCM audio directly from the model, pushed into a client-side streaming jitter buffer queue (`AudioQueue`) for smooth playback.
+- **Multimodal Visual Inputs**: Receives debounced code diffs from the Monaco Editor and JPEG snapshots of the Excalidraw whiteboard canvas every 5 seconds.
+- **Keystroke-Aware VAD Suppression**: Dynamic Voice Activity Detection suppresses AI interruptions while the candidate is actively typing code or drawing architecture diagrams.
+- **Location**: [`backend/app/services/gemini_live.py`](file:///home/deepak/ai-interviewer/backend/app/services/gemini_live.py), [`frontend/src/lib/audioStream.ts`](file:///home/deepak/ai-interviewer/frontend/src/lib/audioStream.ts)
+
+#### 2. Candidate Resume Claim Graph Extractor (`gemini-2.5-flash`)
+- **Extraction Pipeline**: Reads candidate PDF resumes locally via PyMuPDF (`fitz`), eliminating cloud document upload leakage.
+- **Structured Pydantic Output**: Feeds raw text to `gemini-2.5-flash` with a strict JSON schema returning `CandidateClaimGraph`:
+  - **Identified Claims**: Project titles, target metrics, baseline models, production constraints.
+  - **3-Layer Probing Vectors**:
+    1. *Mathematical Foundations*: Loss functions, regularization, gradient clipping, sample weightings.
+    2. *Production Constraints*: P99 latency budgets, memory limits, QPS bottlenecks, feature store consistency.
+    3. *Offline vs. Online Divergence*: Feedback delays, position bias, covariate drift, survivorship bias.
+- **Location**: [`backend/app/services/resume_parser.py`](file:///home/deepak/ai-interviewer/backend/app/services/resume_parser.py), [`backend/app/schemas.py`](file:///home/deepak/ai-interviewer/backend/app/schemas.py)
+
+#### 3. Conversational Bar-Raiser Engine (`gemini-2.5-flash` + Local Semantic Fallback)
+- **Anti-Sycophantic Persona**: Formulated via [`interviewer_system.py`](file:///home/deepak/ai-interviewer/backend/app/prompts/interviewer_system.py). Emulates a Google/Meta L6+ Staff Applied Scientist interviewer.
+- **Key Behavioral Rules**:
+  - Eliminates sycophantic conversational filler ("Awesome!", "Great answer!").
+  - Immediately jumps into technical evaluation, probing edge cases, mathematical formulation, and trade-offs.
+  - Contextually answers candidate clarifying questions regarding database schema, nullability, SLA boundaries, and data distribution using active question metadata.
+  - Delivers graduated hints without prematurely revealing canonical answers.
+  - Reviews live code execution outputs and test failures, providing Socratic guidance.
+- **Graceful Offline Mode**: Includes a local deterministic fallback engine that synthesizes human-like spoken prompts and reviews code even when running zero-key offline.
+- **Location**: [`backend/app/services/interviewer_engine.py`](file:///home/deepak/ai-interviewer/backend/app/services/interviewer_engine.py)
+
+#### 4. Slow-Loop Async Shadow Supervisor (`gemini-2.5-pro`)
+- **Asynchronous Execution**: Operates out-of-band in a background thread every 3 candidate conversational turns or immediately upon code execution.
+- **Audit Objectives**:
+  - Detects superficial hand-waving or ungrounded claims (e.g. reciting high-level buzzwords without specifying loss formulations or feature engineering).
+  - Detects algorithmic inefficiencies (e.g. nested $O(N^2)$ loops, full-table scans, unindexed joins, missing `PARTITION BY` clauses).
+  - Evaluates whiteboard architectural bottlenecks (e.g. single points of failure, unbuffered Kafka topics, embedding latency spikes).
+- **Silent Probe Injection**: When an issue is detected, the supervisor synthesizes a concise, pointed question and injects it into the live interviewer's context window as an internal directive for the next conversational turn.
+- **Location**: [`backend/app/services/shadow_supervisor.py`](file:///home/deepak/ai-interviewer/backend/app/services/shadow_supervisor.py), [`backend/app/prompts/supervisor_system.py`](file:///home/deepak/ai-interviewer/backend/app/prompts/supervisor_system.py)
+
+#### 5. Post-Interview BARS Grader & Staff STAR Rewriter (`gemini-2.5-flash` / `gemini-2.5-pro`)
+- **Evaluation Criteria**: Analyzes the complete interview transcript, executed code, test results, and whiteboard canvas against 4 Behaviorally Anchored Rating Scale (BARS) dimensions (1–5 scale):
+  1. *Coding & Algorithmic Rigor* (syntax, complexity, modularity, edge cases)
+  2. *System Design & Scalability* (component decoupling, latency SLAs, backpressure, failure modes)
+  3. *Communication & Structured Thinking* (clarification asking, active signposting, conciseness)
+  4. *Domain Depth & Technical Truth* (mathematical understanding, metric alignment, production realities)
+- **Hiring Manager Output**: Generates an overall hiring recommendation (`CLEAR HIRE`, `INCLINE HIRE`, `WEAK LEAN`, `NO HIRE`), bulleted strengths, bulleted improvement areas, and a synthesized hiring manager summary.
+- **60-Second Staff-Level STAR Rewrites**: For every substantive question asked, rewrites candidate answers into how a Staff/Principal Engineer would present the same project in under 60 seconds (Situation, Task, Action, Result) with precise mathematical trade-offs.
+- **Location**: [`backend/app/services/rubric_evaluator.py`](file:///home/deepak/ai-interviewer/backend/app/services/rubric_evaluator.py), [`backend/app/prompts/grader_system.py`](file:///home/deepak/ai-interviewer/backend/app/prompts/grader_system.py)
+
+---
+
+## 📚 Question Bank & Sandboxed WebAssembly Execution Engine
+
+### Why a Question Bank Exists (Live AI vs. Grounded Execution)
+
+A frequent question in AI-driven technical interviewing is: **"Why do we need a question bank if the AI can conduct live discussions and evaluations dynamically?"**
+
+The answer lies in the fundamental difference between **conversational reasoning** and **sandboxed technical execution**:
+
+1. **Deterministic Execution vs. Hallucinated Schemas**: In a real technical coding interview, candidates must write code that actually runs against real tables and passes automated unit tests. While an LLM can generate question text, generating reproducible database schemas, populated relational tables (`seed_sql`), and executable unit test assertions on the fly is prone to syntax errors, non-deterministic schemas, and schema-query mismatches.
+2. **True In-Browser Zero-Server Execution**: Our platform executes SQL queries in **DuckDB-WASM** and Python algorithms in **Pyodide WASM** directly inside the user's browser. This requires pre-compiled, valid seed data and assertable test cases that run instantaneously without spinning up costly remote containers.
+3. **Calibrated FAANG Bar-Raiser Rubrics**: Real senior interviewers grade against standardized, calibrated rubrics (e.g. handling skewed partitions, window frames, time-travel joins, p99 latency trade-offs). Pre-calibrated rubric criteria ensure scoring is objectively consistent across candidates rather than drifting with LLM randomness.
+4. **Organic Spoken Interaction Built on Top**: The question bank provides the **technical ground truth** (schema, tests, rubrics), while the **AI interviewer delivers the organic, human-like experience**:
+   - Spoken verbal introductions tailored to candidate background.
+   - Dynamic clarification answers when candidates ask about nulls, duplicate keys, or SLAs.
+   - Contextual, non-spoiler hints when a candidate gets stuck.
+   - Socratic follow-up probes challenging edge cases or algorithmic complexity.
+
+---
+
+### Dynamic Randomization & Practice Variety System
+
+To ensure candidates practicing over multiple weeks never experience repetitive lock-in, the platform features a multi-tiered variety system:
+
+- **Dynamic Stage Assignment**: When entering `LIVE_CODING_SQL_PYTHON` or `ML_SYSTEM_DESIGN`, the FSM orchestrator dynamically selects a randomized, uncompleted question from the bank if one was not manually chosen.
+- **Pre-Interview Focus Selector**: On the onboarding dashboard (`/`), candidates can explicitly choose their practice domain or problem (e.g. *Cohort Retention Analysis*, *Leaky Bucket Rate Limiter*, *Real-Time Fraud Detection Feature Store*), or leave it set to "Auto-Select Fresh Problem".
+- **In-Interview "Next Problem" Switcher**: The interactive workbench header features a **"Next Problem"** button allowing candidates to switch to a fresh problem at any time without exiting the session or losing their interview transcript.
+- **Zero-Lockout Extensibility**: Adding a new problem to `question_bank.py` automatically registers it across all REST endpoints, the frontend picker, and the FSM orchestrator with zero database migrations.
+
+---
+
+### Complete Question Bank Integration Map
+
+The Question Bank is integrated end-to-end across both backend services and frontend UI components:
+
+```text
+                               +──────────────────────────────────────────────────+
+                               |     backend/app/services/question_bank.py        |
+                               |  • 21 Curated Problems (7 SQL, 7 Py, 7 System)   |
+                               |  • Schema, Seeds, Tests, Rubrics, Hints          |
+                               +─────────────────────────┬────────────────────────+
+                                                         │
+               ┌─────────────────────────────────────────┼─────────────────────────────────────────┐
+               ▼                                         ▼                                         ▼
++──────────────────────────────+          +──────────────────────────────+          +──────────────────────────────+
+|   fsm_orchestrator.py        |          |   interviewer_engine.py      |          |       gemini_live.py         |
+| • Dynamic random selection   |          | • Verbal introductions       |          | • Injects problem context    |
+| • Prevents problem lock-in   |          | • Schema clarifications      |          | • Emits fsm_snapshot via WS  |
+| • Assigns active problem     |          | • Progressive hints          |          | • Syncs state with client    |
++──────────────┬───────────────+          +──────────────┬───────────────+          +──────────────┬───────────────+
+               │                                         │                                         │
+               └─────────────────────────────────────────┼─────────────────────────────────────────┘
+                                                         │
+                                                         ▼
+                                          +──────────────────────────────+
+                                          |         FastAPI REST         |
+                                          | • GET /api/questions         |
+                                          | • POST /api/session/init     |
+                                          | • POST /.../switch_question  |
+                                          +──────────────┬───────────────+
+                                                         │
+               ┌─────────────────────────────────────────┼─────────────────────────────────────────┐
+               ▼                                         ▼                                         ▼
++──────────────────────────────+          +──────────────────────────────+          +──────────────────────────────+
+|       frontend/page.tsx      |          |   interview/[id]/page.tsx    |          |       CodeSandbox.tsx        |
+| • Practice focus dropdown    |          | • "Next Problem" switcher    |          | • DuckDB-WASM seed tables    |
+| • Category-grouped picker    |          | • Active problem badge       |          | • Pyodide WASM unit tests    |
+| • Dynamic problem metadata   |          | • Schema reference drawer    |          | • Monaco starter code        |
++──────────────────────────────+          +──────────────────────────────+          +──────────────────────────────+
+```
+
+1. **Definition & Dataclass Schema ([`question_bank.py`](file:///home/deepak/ai-interviewer/backend/app/services/question_bank.py))**:
+   - Contains 21 curated problems structured under the `Question` dataclass: `id`, `title`, `category`, `difficulty`, `scenario`, `verbal_introduction`, `starter_code`, `seed_sql`, `unit_tests`, `rubric_criteria`, `clarifications`, and `hints`.
+2. **Deterministic Stage Assignment ([`fsm_orchestrator.py`](file:///home/deepak/ai-interviewer/backend/app/services/fsm_orchestrator.py))**:
+   - Dynamically selects randomized problems via `get_random_question()` upon entering `LIVE_CODING_SQL_PYTHON` and `ML_SYSTEM_DESIGN` stages.
+3. **Conversational Engine & Dynamic Guidance ([`interviewer_engine.py`](file:///home/deepak/ai-interviewer/backend/app/services/interviewer_engine.py))**:
+   - Converts `verbal_introduction` into human-like spoken prompts.
+   - Uses `question.clarifications` to answer candidate inquiries regarding schema types, null values, and constraints.
+   - Uses `question.hints` to provide progressive, Socratic assistance.
+4. **WebSocket State Synchronization ([`gemini_live.py`](file:///home/deepak/ai-interviewer/backend/app/services/gemini_live.py))**:
+   - Injects active problem context into Gemini Live's system instructions and sends `fsm_snapshot` containing `active_question` to the frontend.
+5. **REST API Endpoints ([`main.py`](file:///home/deepak/ai-interviewer/backend/app/main.py))**:
+   - `GET /api/questions`: Lists all 21 problems grouped by category.
+   - `POST /api/session/init`: Initializes interview sessions with candidate-specified `question_id`.
+   - `POST /api/session/{session_id}/switch_question`: Dynamically switches problems mid-session.
+6. **Candidate Onboarding Dashboard ([`page.tsx`](file:///home/deepak/ai-interviewer/frontend/src/app/page.tsx))**:
+   - Interactive dropdown allowing candidates to target specific questions or practice areas.
+7. **Interview Workbench & Problem Switcher ([`interview/[id]/page.tsx`](file:///home/deepak/ai-interviewer/frontend/src/app/interview/[id]/page.tsx))**:
+   - Real-time navigation bar with problem badges and a "Next Problem" button to switch questions seamlessly.
+8. **Client-Side Monaco CodeSandbox ([`CodeSandbox.tsx`](file:///home/deepak/ai-interviewer/frontend/src/components/CodeSandbox.tsx))**:
+   - Injects `starter_code` into Monaco Editor.
+   - Executes `seed_sql` in DuckDB-WASM, creating real relational tables and an interactive schema drawer.
+   - Executes Python code with `unit_tests` in Pyodide WASM, reporting passing/failing test assertions.
+9. **Interactive Whiteboard Canvas ([`SystemDesignCanvas.tsx`](file:///home/deepak/ai-interviewer/frontend/src/components/SystemDesignCanvas.tsx))**:
+   - Displays real-world system design scenarios, scale constraints (QPS, storage, latency), and debounces snapshots for the live interviewer.
+10. **Post-Interview BARS Scorecard ([`ScorecardView.tsx`](file:///home/deepak/ai-interviewer/frontend/src/components/ScorecardView.tsx) & [`report/[id]/page.tsx`](file:///home/deepak/ai-interviewer/frontend/src/app/report/[id]/page.tsx))**:
+    - Benchmarks candidate code and whiteboard architecture against the canonical `rubric_criteria`.
+
+---
+
+### Complete 21-Problem Catalog
+
+#### Category 1: SQL Analytical & Window Function Problems (DuckDB-WASM)
+
+| ID | Problem Title | Difficulty | Key Concepts & Analytical Focus |
+| :--- | :--- | :--- | :--- |
+| `sql_01_retention_cohort` | Monthly User Retention & Cohort Analysis | Medium | Self-joins, `DATE_TRUNC`, cohort grouping, churn tracking |
+| `sql_02_rolling_metrics` | Rolling 7-Day Revenue & Anomaly Outliers | Medium | `SUM() OVER (RANGE/ROWS BETWEEN)`, window frames, standard deviation z-score filtering |
+| `sql_03_funnel_conversion` | Multi-Touch Funnel Conversion Rates | Hard | Sequential session tracking, `LAG()` / `LEAD()`, drop-off percentage calculations |
+| `sql_04_sessionization` | User Activity Sessionization & Inactivity Spans | Hard | Time-gap thresholding, cumulative flags, session grouping |
+| `sql_05_surge_pricing` | Dynamic Surge Pricing Multiplier Windows | Hard | Temporal range joins, dense ranking, demand/supply ratio windows |
+| `sql_06_point_in_time_features` | Point-in-Time Feature Store Temporal Joins | Hard | Data leakage prevention, `AS OF` temporal join logic, feature snapshotting |
+| `sql_07_experiment_cuped` | A/B Testing Variance Reduction (CUPED) | Hard | Pre-experiment covariate adjustment, variance reduction calculation, OLS slope estimator |
+
+#### Category 2: Python Algorithmic & Vectorized Problems (Pyodide WASM)
+
+| ID | Problem Title | Difficulty | Key Concepts & Algorithmic Focus |
+| :--- | :--- | :--- | :--- |
+| `py_01_vector_similarity` | Top-K Cosine Similarity & Vector Search | Medium | NumPy vectorization, matrix dot products, heap-based Top-K selection |
+| `py_02_gradient_descent` | Logistic Regression SGD from Scratch | Medium | Sigmoid activation, cross-entropy loss, gradient calculation, L2 regularization |
+| `py_03_decision_tree_split` | Best Split Feature Selector (Gini Impurity) | Hard | Gini impurity calculation, multi-feature sweep, threshold optimization |
+| `py_04_kmeans_clustering` | K-Means Clustering & Centroid Assignment | Medium | Vectorized Euclidean distance, Voronoi partition update, Lloyd's algorithm |
+| `py_05_leaky_bucket` | Token Bucket / Leaky Bucket Rate Limiter | Hard | Thread-safe token consumption, replenishment calculation, burst capacity |
+| `py_06_reservoir_sampling` | Streaming Reservoir Sampling (Algorithm R) | Medium | Single-pass random sampling, uniform probability distribution over unbounded streams |
+| `py_07_trie_autocomplete` | Prefix Trie with Frequency Ranking | Hard | Tree traversal, prefix matching, frequency-ordered priority queue suggestions |
+
+#### Category 3: Machine Learning System Design Problems (Excalidraw Whiteboard)
+
+| ID | Problem Title | Difficulty | Key Architectural & Scaling Challenges |
+| :--- | :--- | :--- | :--- |
+| `sys_01_realtime_fraud` | Real-Time Payment Fraud Detection Engine | Hard | Sub-50ms p99 SLA, extreme class imbalance, low-latency Redis feature store |
+| `sys_02_recsys_two_stage` | Two-Stage E-Commerce Video Recommender | Hard | 100M item corpus, Two-Tower ANN retrieval (HNSW), heavy GBDT/DLRM ranker |
+| `sys_03_search_embeddings` | Semantic Search & Multimodal Vector Store | Hard | Multimodal encoders (CLIP), vector indexing (IVF-PQ/HNSW), hybrid keyword search |
+| `sys_04_ab_testing_platform` | Enterprise A/B Testing & Feature Flagging | Hard | Consistent SHA-256 hashing, sample ratio mismatch (SRM) detection, sequential testing |
+| `sys_05_llm_rag_pipeline` | Enterprise Hybrid RAG System | Hard | Chunking strategies, dense+BM25 hybrid retrieval, cross-encoder re-ranking, hallu-guardrails |
+| `sys_06_autonomous_ride_dispatch` | Real-Time Ride Matching & Dynamic Pricing | Hard | Spatio-temporal indexing (H3/S2 cells), bipartite graph matching, supply-demand forecasting |
+| `sys_07_ad_click_prediction` | High-Throughput Ad CTR Prediction (DLRM) | Hard | 100k QPS, terabyte-scale sparse embedding tables, continuous online training |
 
 ---
 
@@ -230,7 +479,7 @@ The codebase adheres to rigorous engineering standards with full test coverage a
 ruff check backend/
 ruff format --check backend/
 
-# Run complete pytest test suite (19 tests)
+# Run complete pytest test suite (24 tests)
 pytest backend/tests/ -v
 
 # Run frontend type checking & production build
