@@ -226,6 +226,22 @@ export default function InterviewRoomPage() {
     }
   }, []);
 
+  // Global shortcut: press Spacebar (outside input/code fields) to cut in/interrupt speech
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.code === "Space" && isSpeakingRef.current) {
+        const target = e.target as HTMLElement;
+        if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable || target.closest(".monaco-editor"))) {
+          return;
+        }
+        e.preventDefault();
+        handleInterrupt();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [handleInterrupt]);
+
   // Deterministic Persona-Locked Speech Synthesis with Echo-Loop Safeguard
   const speakInterviewerCaption = useCallback(
     (text: string) => {
@@ -304,19 +320,15 @@ export default function InterviewRoomPage() {
         recognition.lang = "en-US";
 
         recognition.onspeechstart = () => {
-          // If candidate started speaking while interviewer was talking -> Barge in!
-          if (isSpeakingRef.current) {
-            handleInterrupt();
-          }
           lastCandidateActivityRef.current = Date.now();
           setSilencePrompt(null);
         };
 
         recognition.onresult = (event: any) => {
           // CRITICAL ACOUSTIC SAFEGUARD:
-          // If the interviewer is speaking, or finished less than 1000ms ago, discard audio!
+          // If the interviewer is speaking, or finished less than 1200ms ago, discard audio!
           // This prevents the computer mic from hearing the speaker and creating an infinite loop.
-          if (isSpeakingRef.current || Date.now() - lastSpokeTimestampRef.current < 1000) {
+          if (isSpeakingRef.current || Date.now() - lastSpokeTimestampRef.current < 1200) {
             return;
           }
 

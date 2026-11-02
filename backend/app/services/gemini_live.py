@@ -158,6 +158,21 @@ class LiveInterviewSessionHandler:
             ) as session:
                 self.gemini_session = session
 
+                # Kick off initial interviewer self-introduction turn
+                active_q = (
+                    get_question_by_id(self.fsm.active_question_id)
+                    if self.fsm and self.fsm.active_question_id
+                    else None
+                )
+                intro_prompt = await self.agent.generate_self_introduction(active_q)
+                try:
+                    await session.send(
+                        input=f"[SYSTEM DIRECTIVE: Welcome the candidate and give your self-introduction now]: {intro_prompt}",
+                        end_of_turn=True,
+                    )
+                except Exception as exc:
+                    logger.warning("Could not send initial intro directive to Gemini Live: %s", exc)
+
                 # Start concurrent sender and receiver tasks
                 client_to_gemini = asyncio.create_task(self._client_to_gemini_stream(session))
                 gemini_to_client = asyncio.create_task(self._gemini_to_client_stream(session))

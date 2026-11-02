@@ -2,7 +2,7 @@
  * Interviewer Voice & Persona Manager.
  * Ensures 100% deterministic, consistent voice synthesis without mid-interview voice changes.
  * Preloads browser voices, locks the selected voice for the session,
- * and fixes Chromium SpeechSynthesis truncation and async loading bugs.
+ * and fixes Chromium SpeechSynthesis garbage-collection and pause/resume truncation bugs.
  */
 
 export interface InterviewerPersona {
@@ -47,6 +47,8 @@ class InterviewerVoiceManager {
   private lockedVoice: SpeechSynthesisVoice | null = null;
   private lockedPersonaId: string = "elena";
   private animInterval: any = null;
+  private keepAliveTimer: any = null;
+  private activeUtterance: SpeechSynthesisUtterance | null = null;
 
   constructor() {
     if (typeof window !== "undefined" && "speechSynthesis" in window) {
@@ -95,7 +97,7 @@ class InterviewerVoiceManager {
     let selected: SpeechSynthesisVoice | undefined;
 
     if (isMale) {
-      // Best natural male English voices
+      // Natural male English voices
       selected = englishVoices.find(
         (v) =>
           v.name.includes("Google UK English Male") ||
@@ -106,7 +108,7 @@ class InterviewerVoiceManager {
           v.name.includes("Natural - English (United States) - Guy")
       );
     } else {
-      // Best natural female English voices
+      // Natural female English voices
       selected = englishVoices.find(
         (v) =>
           v.name.includes("Google US English") ||
@@ -161,11 +163,7 @@ class InterviewerVoiceManager {
   ): Promise<void> {
     if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
 
-    window.speechSynthesis.cancel();
-    if (this.animInterval) {
-      clearInterval(this.animInterval);
-      this.animInterval = null;
-    }
+    this.cancel();
 
     // Strip markdown formatting symbols for natural speech
     const cleanText = text
@@ -176,6 +174,11 @@ class InterviewerVoiceManager {
 
     if (!cleanText) return;
 
+    // Unpause speech synthesis in case Chromium was stuck in paused state
+    if (window.speechSynthesis.paused) {
+      window.speechSynthesis.resume();
+    }
+
     const voice = await this.getLockedVoice();
     const utterance = new SpeechSynthesisUtterance(cleanText);
     if (voice) {
@@ -183,6 +186,10 @@ class InterviewerVoiceManager {
     }
     utterance.rate = 1.0;
     utterance.pitch = 1.0;
+
+    // Keep persistent references to avoid V8 garbage collection mid-speech
+    this.activeUtterance = utterance;
+    (window as any).__activeSpeechUtterance = utterance;
 
     utterance.onstart = () => {
       callbacks?.onStart?.();
@@ -194,6 +201,17 @@ class InterviewerVoiceManager {
           callbacks.onFrequency?.(fakeFreq);
         }, 120);
       }
+
+      // Chromium keepalive: SpeechSynthesis can stall after 15 seconds unless resumed
+      if (this.keepAliveTimer) clearInterval(this.keepAliveTimer);
+      this.keepAliveTimer = setInterval(() => {
+        if (typeof window !== "undefined" && "speechSynthesis" in window) {
+          if (window.speechSynthesis.speaking && !window.speechSynthesis.paused) {
+            window.speechSynthesis.pause();
+            window.speechSynthesis.resume();
+          }
+        }
+      }, 9000);
     };
 
     const cleanup = () => {
@@ -201,12 +219,23 @@ class InterviewerVoiceManager {
         clearInterval(this.animInterval);
         this.animInterval = null;
       }
+      if (this.keepAliveTimer) {
+        clearInterval(this.keepAliveTimer);
+        this.keepAliveTimer = null;
+      }
+      this.activeUtterance = null;
+      if (typeof window !== "undefined") {
+        (window as any).__activeSpeechUtterance = null;
+      }
       callbacks?.onFrequency?.(0);
       callbacks?.onEnd?.();
     };
 
     utterance.onend = cleanup;
-    utterance.onerror = cleanup;
+    utterance.onerror = (e) => {
+      // In Chromium, 'interrupted' or 'canceled' errors are expected when cancelling
+      cleanup();
+    };
 
     window.speechSynthesis.speak(utterance);
   }
@@ -218,6 +247,14 @@ class InterviewerVoiceManager {
     if (this.animInterval) {
       clearInterval(this.animInterval);
       this.animInterval = null;
+    }
+    if (this.keepAliveTimer) {
+      clearInterval(this.keepAliveTimer);
+      this.keepAliveTimer = null;
+    }
+    this.activeUtterance = null;
+    if (typeof window !== "undefined") {
+      (window as any).__activeSpeechUtterance = null;
     }
   }
 }
