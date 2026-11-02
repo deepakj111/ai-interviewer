@@ -11,6 +11,7 @@ export default function ReportPage() {
   const sessionId = params.id as string;
 
   const [report, setReport] = useState<ScorecardData | null>(null);
+  const [transcripts, setTranscripts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -38,6 +39,17 @@ export default function ReportPage() {
 
         const data = await res.json();
         setReport(data);
+
+        // Fetch complete interview transcripts for review log
+        try {
+          const tRes = await fetch(`http://localhost:8000/api/session/${sessionId}/transcripts`);
+          if (tRes.ok) {
+            const tData = await tRes.json();
+            setTranscripts(tData);
+          }
+        } catch (tErr) {
+          console.warn("Could not fetch transcripts log:", tErr);
+        }
       } catch (err: any) {
         console.error(err);
         setError(err.message || "Could not load evaluation report");
@@ -90,7 +102,7 @@ export default function ReportPage() {
         </div>
       )}
 
-      {!loading && report && <ScorecardView data={report} />}
+      {!loading && report && <ScorecardView data={report} transcripts={transcripts} />}
     </div>
   );
 }

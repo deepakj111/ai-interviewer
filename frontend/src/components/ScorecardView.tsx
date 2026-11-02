@@ -11,6 +11,11 @@ import {
   AlertTriangle,
   Sparkles,
   ArrowRight,
+  Printer,
+  Copy,
+  Check,
+  ChevronDown,
+  Terminal,
 } from "lucide-react";
 
 export interface ScorecardData {
@@ -57,10 +62,20 @@ export interface ScorecardData {
 
 interface ScorecardViewProps {
   data: ScorecardData;
+  transcripts?: Array<{
+    id?: number;
+    stage?: string;
+    speaker: string;
+    text: string;
+    code_snapshot?: string | null;
+    timestamp?: string;
+  }>;
 }
 
-export default function ScorecardView({ data }: ScorecardViewProps) {
+export default function ScorecardView({ data, transcripts = [] }: ScorecardViewProps) {
   const [selectedCritiqueIdx, setSelectedCritiqueIdx] = useState(0);
+  const [isCopied, setIsCopied] = useState(false);
+  const [isTranscriptExpanded, setIsTranscriptExpanded] = useState(false);
 
   const dimensions = [
     {
@@ -89,9 +104,34 @@ export default function ScorecardView({ data }: ScorecardViewProps) {
     },
   ];
 
+  const handlePrint = () => {
+    if (typeof window !== "undefined") {
+      window.print();
+    }
+  };
+
+  const handleCopySummary = () => {
+    const text = `AI Interviewer Scorecard:
+Overall Rating: ${data.overall_score.toFixed(1)} / 5.0
+Recommendation: ${data.recommendation}
+
+Summary:
+${data.summary}
+
+Key Strengths:
+${data.key_strengths.map((s) => `• ${s}`).join("\n")}
+
+Critical Improvement Areas:
+${data.critical_improvement_areas.map((i) => `• ${i}`).join("\n")}
+`;
+    navigator.clipboard.writeText(text);
+    setIsCopied(true);
+    setTimeout(() => setIsCopied(false), 2000);
+  };
+
   return (
     <div className="space-y-8 max-w-6xl mx-auto pb-12">
-      {/* Top Banner: Overall Score & Recommendation */}
+      {/* Top Banner: Overall Score, Recommendation & Export Actions */}
       <div className="p-8 rounded-3xl glass-panel border border-slate-800 bg-gradient-to-br from-slate-900 via-slate-900/90 to-blue-950/40 shadow-2xl flex flex-col md:flex-row items-center justify-between gap-6">
         <div>
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-400 text-xs font-semibold uppercase tracking-wider mb-3">
@@ -105,41 +145,69 @@ export default function ScorecardView({ data }: ScorecardViewProps) {
           </p>
         </div>
 
-        {/* Score Badge */}
-        <div className="flex items-center gap-6 p-4 rounded-2xl bg-slate-950/70 border border-slate-800">
-          <div className="text-center">
-            <div className="text-4xl md:text-5xl font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-indigo-400">
-              {data.overall_score.toFixed(1)}
-              <span className="text-xl text-slate-500 font-normal"> / 5.0</span>
+        {/* Score Badge and Export Controls */}
+        <div className="flex flex-col sm:flex-row items-center gap-4">
+          <div className="flex items-center gap-6 p-4 rounded-2xl bg-slate-950/70 border border-slate-800">
+            <div className="text-center">
+              <div className="text-4xl md:text-5xl font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-indigo-400">
+                {data.overall_score.toFixed(1)}
+                <span className="text-xl text-slate-500 font-normal"> / 5.0</span>
+              </div>
+              <p className="text-xs font-medium text-slate-400 mt-1 uppercase tracking-wider">
+                Overall Rating
+              </p>
             </div>
-            <p className="text-xs font-medium text-slate-400 mt-1 uppercase tracking-wider">
-              Overall Rating
-            </p>
+
+            <div className="h-12 w-px bg-slate-800" />
+
+            <div className="text-center pr-2">
+              <span
+                className={`inline-block px-3.5 py-1.5 rounded-full text-xs font-bold uppercase tracking-wider ${
+                  data.recommendation.toLowerCase().includes("hire")
+                    ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
+                    : "bg-rose-500/20 text-rose-300 border border-rose-500/30"
+                }`}
+              >
+                {data.recommendation}
+              </span>
+              <p className="text-xs font-medium text-slate-400 mt-1 uppercase tracking-wider">
+                Verdict
+              </p>
+            </div>
           </div>
 
-          <div className="h-12 w-px bg-slate-800" />
-
-          <div className="text-center pr-2">
-            <span
-              className={`inline-block px-3.5 py-1.5 rounded-full text-xs font-bold uppercase tracking-wider ${
-                data.recommendation.toLowerCase().includes("hire")
-                  ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
-                  : "bg-rose-500/20 text-rose-300 border border-rose-500/30"
-              }`}
+          {/* Action Buttons: Print PDF & Copy */}
+          <div className="flex flex-row sm:flex-col gap-2">
+            <button
+              type="button"
+              onClick={handlePrint}
+              className="px-3 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-800 text-xs font-medium flex items-center gap-1.5 transition-colors"
+              title="Print or Save as PDF"
             >
-              {data.recommendation}
-            </span>
-            <p className="text-xs font-medium text-slate-400 mt-1 uppercase tracking-wider">
-              Verdict
-            </p>
+              <Printer className="w-3.5 h-3.5 text-blue-400" />
+              <span>Print / PDF</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleCopySummary}
+              className="px-3 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-800 text-xs font-medium flex items-center gap-1.5 transition-colors"
+              title="Copy Summary to Clipboard"
+            >
+              {isCopied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5 text-slate-400" />}
+              <span>{isCopied ? "Copied!" : "Copy Report"}</span>
+            </button>
           </div>
         </div>
       </div>
 
-      {/* 4 BARS Dimensions Cards */}
+      {/* 4 BARS Dimensions Cards with Strengths & Weaknesses */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         {dimensions.map((dim, i) => {
           const Icon = dim.icon;
+          const strengths = dim.data.strengths || [];
+          const weaknesses = dim.data.weaknesses || [];
+
           return (
             <div
               key={i}
@@ -160,6 +228,24 @@ export default function ScorecardView({ data }: ScorecardViewProps) {
                 <p className="text-xs text-slate-400 mt-2 leading-relaxed">
                   {dim.data.rationale}
                 </p>
+
+                {/* Dimension Strengths & Weaknesses */}
+                {(strengths.length > 0 || weaknesses.length > 0) && (
+                  <div className="mt-3 pt-3 border-t border-slate-800/60 space-y-2">
+                    {strengths.slice(0, 2).map((s, idx) => (
+                      <div key={idx} className="text-[11px] text-emerald-300 flex items-start gap-1.5 leading-tight">
+                        <span className="text-emerald-400 font-bold shrink-0">+</span>
+                        <span>{s}</span>
+                      </div>
+                    ))}
+                    {weaknesses.slice(0, 2).map((w, idx) => (
+                      <div key={idx} className="text-[11px] text-amber-300/90 flex items-start gap-1.5 leading-tight">
+                        <span className="text-amber-400 font-bold shrink-0">-</span>
+                        <span>{w}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
 
               {/* Progress bar */}
@@ -303,6 +389,63 @@ export default function ScorecardView({ data }: ScorecardViewProps) {
                   </div>
                 </div>
               </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Expandable Complete Interview Transcript & Code Audit */}
+      {transcripts.length > 0 && (
+        <div className="rounded-3xl glass-panel border border-slate-800 bg-slate-900/70 p-6 shadow-2xl">
+          <button
+            type="button"
+            onClick={() => setIsTranscriptExpanded(!isTranscriptExpanded)}
+            className="w-full flex items-center justify-between text-left"
+          >
+            <div>
+              <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                <Terminal className="w-4 h-4 text-blue-400" /> Complete Interview Transcript & Code Audit Log
+              </h3>
+              <p className="text-xs text-slate-400 mt-1">
+                Review all {transcripts.length} turns exchanged during your interview, including spoken answers and code submissions.
+              </p>
+            </div>
+            <div className="p-2 rounded-lg bg-slate-800 text-slate-300">
+              <ChevronDown className={`w-4 h-4 transition-transform duration-200 ${isTranscriptExpanded ? "rotate-180" : ""}`} />
+            </div>
+          </button>
+
+          {isTranscriptExpanded && (
+            <div className="mt-6 pt-6 border-t border-slate-800/80 space-y-3 max-h-[450px] overflow-y-auto pr-2">
+              {transcripts.map((turn, idx) => (
+                <div
+                  key={idx}
+                  className={`p-3.5 rounded-xl border text-xs leading-relaxed ${
+                    turn.speaker === "interviewer"
+                      ? "bg-blue-950/20 border-blue-900/30 text-blue-100"
+                      : "bg-slate-950 border-slate-800 text-slate-200 ml-4"
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-blue-400">
+                      {turn.speaker === "interviewer" ? "Bar-Raiser Interviewer" : "You (Candidate)"}
+                    </span>
+                    {turn.stage && (
+                      <span className="text-[9px] uppercase px-2 py-0.5 rounded bg-slate-800 text-slate-400 font-mono">
+                        {turn.stage.replace(/_/g, " ")}
+                      </span>
+                    )}
+                  </div>
+                  <p className="whitespace-pre-wrap">{turn.text}</p>
+
+                  {turn.code_snapshot && (
+                    <div className="mt-2.5 p-2.5 rounded-lg bg-slate-950/90 border border-slate-800 font-mono text-[11px] text-emerald-300 overflow-x-auto">
+                      <span className="text-[9px] text-slate-500 uppercase block mb-1">Code Snapshot at this turn:</span>
+                      <pre>{turn.code_snapshot}</pre>
+                    </div>
+                  )}
+                </div>
+              ))}
             </div>
           )}
         </div>
