@@ -24,6 +24,7 @@ import {
   Rocket,
   HelpCircle,
   Lightbulb,
+  Headphones,
 } from "lucide-react";
 import InterviewerAvatar from "@/components/InterviewerAvatar";
 import CandidateWebcam from "@/components/CandidateWebcam";
@@ -113,6 +114,29 @@ export default function InterviewRoomPage() {
   const [isMicMuted, setIsMicMuted] = useState(false);
   const [isTtsEnabled, setIsTtsEnabled] = useState(true);
   const [isCandidateWorking, setIsCandidateWorking] = useState(false);
+  const [isHeadsetMode, setIsHeadsetMode] = useState<boolean>(true);
+  const [detectedAudioDevice, setDetectedAudioDevice] = useState<string>("Headset Active");
+
+  // Auto-detect Bluetooth/Headset audio input devices
+  useEffect(() => {
+    async function checkDevices() {
+      if (typeof navigator === "undefined" || !navigator.mediaDevices?.enumerateDevices) return;
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const inputs = devices.filter((d) => d.kind === "audioinput");
+        const found = inputs.find((d) =>
+          /headset|bluetooth|airpods|headphones|earphones|buds|wh-|wf-|galaxy/i.test(d.label)
+        );
+        if (found) {
+          setIsHeadsetMode(true);
+          setDetectedAudioDevice(found.label.slice(0, 20));
+        }
+      } catch (err) {
+        console.warn("Audio device enumeration skipped:", err);
+      }
+    }
+    checkDevices();
+  }, []);
 
   const socketRef = useRef<WebSocket | null>(null);
   const audioRecorderRef = useRef<AudioRecorder | null>(null);
@@ -316,7 +340,7 @@ export default function InterviewRoomPage() {
       try {
         const recognition = new SpeechRecognition();
         recognition.continuous = true;
-        recognition.interimResults = false;
+        recognition.interimResults = true;
         recognition.lang = "en-US";
 
         recognition.onspeechstart = () => {
@@ -325,17 +349,24 @@ export default function InterviewRoomPage() {
         };
 
         recognition.onresult = (event: any) => {
-          // CRITICAL ACOUSTIC SAFEGUARD:
-          // If the interviewer is speaking, or finished less than 1200ms ago, discard audio!
-          // This prevents the computer mic from hearing the speaker and creating an infinite loop.
-          if (isSpeakingRef.current || Date.now() - lastSpokeTimestampRef.current < 1200) {
+          const results = event.results;
+          const last = results[results.length - 1];
+          const transcript = last[0].transcript.trim();
+
+          // 1. Hands-Free Voice Barge-In for Headset users:
+          // When wearing a headset, candidate speech cuts in immediately without waiting for final pause
+          if (isHeadsetMode && isSpeakingRef.current && transcript.length > 2) {
+            handleInterrupt();
+          }
+
+          // 2. Acoustic Echo Guard for Speaker Mode:
+          // If on laptop speakers, discard audio while interviewer speaks to prevent acoustic loop
+          if (!isHeadsetMode && (isSpeakingRef.current || Date.now() - lastSpokeTimestampRef.current < 1200)) {
             return;
           }
 
-          const results = event.results;
-          const last = results[results.length - 1];
+          // 3. Process final candidate turn:
           if (last.isFinal) {
-            const transcript = last[0].transcript.trim();
             if (transcript && socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
               lastCandidateActivityRef.current = Date.now();
               setSilencePrompt(null);
@@ -371,7 +402,7 @@ export default function InterviewRoomPage() {
         } catch (_) {}
       }
     };
-  }, [isMicMuted, handleInterrupt]);
+  }, [isMicMuted, handleInterrupt, isHeadsetMode]);
 
   // Establish WebSocket connection and Audio streaming
   useEffect(() => {
@@ -772,6 +803,25 @@ export default function InterviewRoomPage() {
           >
             {isTtsEnabled ? <Volume2 className="w-3.5 h-3.5 text-blue-400" /> : <VolumeX className="w-3.5 h-3.5" />}
             <span>Voice {isTtsEnabled ? "On" : "Muted"}</span>
+          </button>
+
+          {/* Headset vs Speaker Mode Toggle (Hands-Free Voice Barge-In) */}
+          <button
+            type="button"
+            onClick={() => setIsHeadsetMode((prev) => !prev)}
+            className={`px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 border transition-all ${
+              isHeadsetMode
+                ? "bg-emerald-950/70 border-emerald-700/60 text-emerald-300 hover:bg-emerald-900/80 shadow-sm shadow-emerald-900/20"
+                : "bg-slate-900/80 border-slate-800 text-slate-400 hover:text-slate-200"
+            }`}
+            title={
+              isHeadsetMode
+                ? `Headset Mode Active (${detectedAudioDevice}): Hands-free voice barge-in is enabled. You can interrupt the interviewer simply by speaking into your headset. Click to switch to Speaker Mode.`
+                : "Speaker Mode Active: Push/Space/Click to interrupt (prevents laptop speaker audio from cutting off the interviewer). Click to switch to Headset Mode."
+            }
+          >
+            <Headphones className={`w-3.5 h-3.5 ${isHeadsetMode ? "text-emerald-400" : "text-slate-400"}`} />
+            <span>{isHeadsetMode ? "Headset Voice Barge-In" : "Speaker Push-to-Cut"}</span>
           </button>
 
           <button
