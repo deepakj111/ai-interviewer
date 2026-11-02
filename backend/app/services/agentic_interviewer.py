@@ -1,15 +1,22 @@
-"""Agentic Technical Interview Orchestrator.
+"""Agentic Technical Interview Orchestrator — Persistent Multi-Turn Chat Architecture.
 
-Implements a modern 2026 production-grade agentic interview framework:
-- Dynamic self-introduction (Interviewer introduces themselves, their team, and sets the agenda)
-- Conversational tracking & multi-turn memory (no pre-decided static arrays)
-- Track-specific intelligence: ML Breadth, ML Depth, Generative AI / LLM, Coding, System Design
-- Cultural & technical adaptation: FAANG scale, Indian Product Giants (Swiggy/CRED/Razorpay/Zomato), AI Startups
-- Empathetic silence handling (waits for candidate; never blabbers ahead)
-- Live interruption & barge-in support
+Implements a 2026 production-grade agentic interview framework using the
+Google GenAI SDK's native multi-turn chat session (`client.aio.chats.create`).
+This gives the interviewer true conversational memory: the model natively
+tracks everything discussed, never repeats questions, and naturally
+acknowledges the candidate's answers before asking follow-ups.
+
+Key capabilities:
+- Persistent multi-turn Gemini chat session (no manual history serialization)
+- Dynamic self-introduction with persona + company adaptation
+- LLM-powered silence handling (context-aware, not static strings)
+- LLM-powered code feedback (understands what the code does)
+- LLM-powered question explanation and hint generation
+- Cultural & technical adaptation: FAANG, Indian Product, AI Startup archetypes
 - Native Gemini Google Search grounding for recent company questions
 """
 
+import asyncio
 import logging
 
 from google import genai
@@ -24,11 +31,6 @@ from app.schemas import (
     QuestionItem,
 )
 from app.services.gemini_search_grounding import fetch_recent_company_interview_questions
-from app.services.interviewer_engine import (
-    answer_clarification_question,
-    explain_question_in_detail,
-    provide_hint,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -55,8 +57,95 @@ PERSONA_PROFILES: dict[str, dict[str, str]] = {
 }
 
 
+def _build_interviewer_system_instruction(
+    persona: dict[str, str],
+    target_role: str,
+    target_company: str,
+    company_archetype: str,
+    interview_mode: str,
+    claim_graph_summary: str,
+    recent_company_questions: list[str],
+) -> str:
+    """Build a comprehensive system instruction for the persistent chat session."""
+    company_qs = ""
+    if recent_company_questions:
+        company_qs = (
+            f"\nRecently Reported Interview Questions at {target_company}:\n"
+            + "\n".join(f"- {q}" for q in recent_company_questions[:5])
+            + "\n"
+        )
+
+    return f"""You are {persona["name"]}, {persona["title"]} at {target_company}.
+Your background: {persona["background"]}.
+Your style: {persona["style"]}.
+
+You are conducting a live technical interview for the position of {target_role}.
+Interview Track: {interview_mode}. Company Archetype: {company_archetype}.
+Candidate Profile Summary: {claim_graph_summary}
+{company_qs}
+
+=== CORE BEHAVIORAL RULES (NON-NEGOTIABLE) ===
+
+1. YOU ARE A HUMAN INTERVIEWER, NOT A CHATBOT.
+   - Speak naturally, conversationally, warmly. Use filler words occasionally ("So...", "Right...", "Let's see...").
+   - Your responses are spoken aloud via text-to-speech, so write for the ear, not the eye.
+   - Keep responses SHORT: 1 to 4 sentences maximum per turn. An interviewer who talks too much is failing.
+   - Use natural transitions: "That makes sense. Building on that...", "Okay so...", "Interesting — so what about..."
+
+2. ALWAYS ACKNOWLEDGE WHAT THE CANDIDATE JUST SAID.
+   - Before asking your next question, briefly reference or paraphrase what the candidate said.
+   - Examples: "Right, so you're thinking of using a two-tower architecture...", "Okay, you mentioned using L2 regularization..."
+   - If the candidate's answer is wrong or vague, address it directly: "Hmm, I think there's a subtlety you might be missing there..."
+   - NEVER ignore the candidate's answer and jump to an unrelated question.
+
+3. ZERO SYCOPHANCY (ABSOLUTE RULE).
+   - NEVER say: "Great answer!", "Awesome!", "Spot on!", "Brilliant!", "That's exactly right!", "I love that!", "Good job!"
+   - Neutral acknowledgments only: "Right.", "Got it.", "Makes sense.", "Noted.", "Okay."
+   - If the answer is strong, demonstrate that by asking a harder follow-up, not by praising.
+
+4. NEVER REPEAT A QUESTION.
+   - You have full memory of everything discussed. Never ask the same question or same topic twice.
+   - Naturally progress through different topics and increasing difficulty.
+   - Track what areas you've covered and what remains.
+
+5. ADAPTIVE QUESTION FLOW.
+   - Start with warm, accessible questions and gradually increase difficulty.
+   - If the candidate struggles, simplify and give scaffolding. Don't push harder on a dead end.
+   - If the candidate is strong, accelerate and go deeper into edge cases and production trade-offs.
+   - Ask follow-up probing questions based on their specific answer, not generic follow-ups.
+
+6. RESPECT SILENCE AND THINKING TIME.
+   - When the candidate is thinking or coding, don't rush them.
+   - When prompted that the candidate has been silent, check in warmly and supportively.
+   - Never barrel ahead with new questions while the candidate is formulating their thoughts.
+
+7. INTERVIEW STAGE AWARENESS.
+   - You will receive [SYSTEM] messages indicating the current interview stage.
+   - Adapt your questions to the stage (intro, breadth, depth, coding, design, wrap-up).
+   - Naturally transition between stages with conversational bridges.
+
+8. WHEN THE CANDIDATE SAYS SOMETHING YOU DISAGREE WITH:
+   - Challenge them constructively: "Hmm, I'm not sure that's quite right. Think about what happens when..."
+   - Guide them toward the right answer with Socratic probing, don't just correct them.
+
+=== TRACK-SPECIFIC GUIDANCE ===
+
+ML BREADTH: Quick-fire conceptual questions across fundamentals — metrics, bias-variance, regularization, tree vs. neural, optimization, data preprocessing, feature engineering.
+
+ML DEPTH: Deep mathematical probing — loss function derivations, gradient flows, attention mechanics, normalization layers, position encoding, knowledge distillation, LoRA/QLoRA.
+
+GENERATIVE AI / LLM: RAG pipelines, chunking strategies, vector indexing (HNSW/IVF), fine-tuning vs. in-context learning, KV cache management, speculative decoding, guardrails, agent architectures.
+
+LIVE CODING: Guide to the active problem, assess algorithmic thinking, time/space complexity, edge case handling. Let them code — don't over-talk.
+
+ML SYSTEM DESIGN: Data pipelines, feature stores, model serving, A/B testing, monitoring, feedback loops. Probe latency budgets and failure modes.
+
+BEHAVIORAL/WRAP-UP: Engineering ownership, cross-functional collaboration, production incident handling. End professionally.
+"""
+
+
 class AgenticInterviewer:
-    """Production-grade Agentic Interviewer orchestrating human-like technical dialogue."""
+    """Production-grade Agentic Interviewer with persistent Gemini multi-turn chat memory."""
 
     def __init__(
         self,
@@ -90,6 +179,10 @@ class AgenticInterviewer:
         self.silence_count: int = 0
         self.turns_in_current_stage: int = 0
 
+        # Persistent Gemini Chat Session (lazily initialized)
+        self._chat_session = None
+        self._client = None
+
     async def initialize(self) -> None:
         """Fetch company-specific search questions if enabled or relevant."""
         try:
@@ -102,41 +195,85 @@ class AgenticInterviewer:
         except Exception as exc:
             logger.warning("Could not pre-fetch company search questions: %s", exc)
 
+    async def _get_chat_session(self):
+        """Lazily create the persistent multi-turn Gemini chat session."""
+        if self._chat_session is not None:
+            return self._chat_session
+
+        if not self.api_key or self.settings.ENVIRONMENT == "test":
+            return None
+
+        try:
+            self._client = genai.Client(api_key=self.api_key)
+            claims_summary = (
+                self.claim_graph.model_dump_json()
+                if self.claim_graph
+                else "Standard Senior ML Profile"
+            )
+            system_instruction = _build_interviewer_system_instruction(
+                persona=self.persona,
+                target_role=self.target_role,
+                target_company=self.target_company,
+                company_archetype=self.company_archetype,
+                interview_mode=self.interview_mode.value,
+                claim_graph_summary=claims_summary,
+                recent_company_questions=self.recent_company_questions,
+            )
+
+            config = types.GenerateContentConfig(
+                system_instruction=system_instruction,
+                temperature=0.55,
+                max_output_tokens=350,
+            )
+
+            self._chat_session = self._client.aio.chats.create(
+                model=self.settings.INTERVIEWER_MODEL,
+                config=config,
+            )
+            logger.info("Persistent Gemini chat session created for session %s", self.session_id)
+            return self._chat_session
+        except Exception as exc:
+            logger.error("Failed to create Gemini chat session: %s", exc)
+            return None
+
     async def generate_self_introduction(self, active_question: QuestionItem | None = None) -> str:
-        """Dynamically generate the interviewer's natural self-introduction.
-
-        The interviewer introduces themselves, their team, their engineering focus,
-        sets the interview agenda, and warmly asks the candidate to introduce themselves.
-        """
-        # If API key available, generate dynamic, unique greeting via Gemini
-        if self.api_key and self.settings.ENVIRONMENT != "test":
+        """Dynamically generate the interviewer's natural self-introduction via the chat session."""
+        chat = await self._get_chat_session()
+        if chat:
             try:
-                client = genai.Client(api_key=self.api_key)
+                q_context = ""
+                if active_question:
+                    q_context = (
+                        f"\n[SYSTEM: The first technical problem prepared is: '{active_question.title}' "
+                        f"({active_question.category.value}). You'll introduce it naturally after the candidate "
+                        f"introduces themselves. Don't mention it yet in your greeting.]"
+                    )
+
                 prompt = (
-                    f"You are {self.persona['name']}, {self.persona['title']} at {self.target_company}. "
-                    f"Your background: {self.persona['background']}. Your style: {self.persona['style']}. "
-                    f"You are conducting a technical interview for the position of {self.target_role} in the {self.interview_mode.value} track. "
-                    f"Company Archetype: {self.company_archetype}. "
-                    "Write your natural, spoken self-introduction (3 to 4 sentences):\n"
-                    "1. Introduce yourself warmly by name and your role/team at the company.\n"
-                    "2. Explain the purpose and collaborative structure of today's interview.\n"
-                    "3. Open the floor to the candidate with an inviting prompt for a 60-second background overview.\n"
-                    "Guidelines: Sound genuine, human, professional, calm. Avoid sycophancy. Suitable for text-to-speech."
+                    f"[SYSTEM: The interview is starting now. Current stage: INTRO. "
+                    f"Generate your natural, spoken self-introduction (3-4 sentences). "
+                    f"Introduce yourself warmly by name and role. Explain the interview structure briefly. "
+                    f"Then invite the candidate to give a 60-second background overview. "
+                    f"Sound genuine and human — this will be spoken aloud.]{q_context}"
                 )
 
-                response = await client.aio.models.generate_content(
-                    model=self.settings.EXTRACTOR_MODEL,
-                    contents=prompt,
-                    config=types.GenerateContentConfig(temperature=0.4, max_output_tokens=250),
-                )
+                response = await asyncio.wait_for(chat.send_message(prompt), timeout=10.0)
                 if response.text and len(response.text.strip()) > 30:
-                    return response.text.strip()
+                    intro = response.text.strip()
+                    self.conversation_history.append(
+                        {"speaker": "interviewer", "text": intro, "stage": "INTRO"}
+                    )
+                    return intro
             except Exception as exc:
-                logger.warning("Dynamic intro LLM generation failed: %s; using smart template", exc)
+                logger.warning("Chat session intro generation failed: %s; using template", exc)
 
-        # Smart Archetype-Aware Fallback Introduction
+        # Fallback template introduction
+        return self._generate_fallback_introduction()
+
+    def _generate_fallback_introduction(self) -> str:
+        """Archetype-aware fallback introduction when LLM is unavailable."""
         if self.company_archetype == CompanyArchetype.INDIAN_PRODUCT:
-            context_note = (
+            return (
                 f"I'm {self.persona['name']}, {self.persona['title']} here at {self.target_company}. "
                 f"My team focuses on solving high-throughput hyperlocal challenges and real-time ML systems at Indian scale. "
                 "Today's session is designed to be an open, collaborative technical dialogue rather than a formal test. "
@@ -144,21 +281,19 @@ class AgenticInterviewer:
                 "and a production system you've delivered."
             )
         elif self.company_archetype == CompanyArchetype.AI_STARTUP:
-            context_note = (
+            return (
                 f"Hi there! I'm {self.persona['name']}, {self.persona['title']} at {self.target_company}. "
                 "We move extremely fast and focus on shipping pragmatic, high-impact AI systems and low-latency inference. "
                 "I'm excited to speak with you today. Feel free to think out loud and challenge assumptions throughout our discussion. "
                 "To kick things off, tell me a bit about yourself and the most interesting technical challenge you've tackled recently."
             )
         else:
-            context_note = (
+            return (
                 f"Hello and welcome! I'm {self.persona['name']}, {self.persona['title']} at {self.target_company}. "
                 f"I've spent {self.persona['background']}, and I'll be your interviewer today for the {self.target_role} position. "
                 "Our goal today is to dive into deep engineering problems collaboratively. "
                 "To begin, give me a concise 60-second summary of your technical background, core focus areas, and production experience."
             )
-
-        return context_note
 
     async def generate_turn_response(
         self,
@@ -166,85 +301,44 @@ class AgenticInterviewer:
         stage: InterviewStage,
         active_question: QuestionItem | None = None,
     ) -> str:
-        """Generate a natural, adaptive interviewer response with full context awareness."""
+        """Generate a natural, adaptive interviewer response using the persistent chat session."""
         self.silence_count = 0
         self.turns_in_current_stage += 1
-        u_clean = user_text.strip()
-        u_lower = u_clean.lower()
 
-        # Record candidate utterance into memory
+        # Record candidate utterance
         self.conversation_history.append(
-            {"speaker": "candidate", "text": u_clean, "stage": stage.value}
+            {"speaker": "candidate", "text": user_text.strip(), "stage": stage.value}
         )
 
-        # 1. Candidate explicitly asks to explain the problem
-        if active_question and any(
-            p in u_lower
-            for p in [
-                "explain the question",
-                "can you explain",
-                "what is the problem",
-                "walk me through",
-                "clarify the problem",
-                "what should i do",
-                "repeat the prompt",
-            ]
-        ):
-            return explain_question_in_detail(active_question)
-
-        # 2. Candidate asks for a hint
-        if any(
-            p in u_lower
-            for p in [
-                "give me a hint",
-                "can i get a hint",
-                "i am stuck",
-                "i'm stuck",
-                "confused on how",
-                "need a hint",
-            ]
-        ):
-            return provide_hint(active_question, self.hints_given)
-
-        # 3. Candidate asks clarifying questions on schemas, constraints, SLAs
-        if any(
-            w in u_lower
-            for w in [
-                "can we assume",
-                "what is the schema",
-                "what are the columns",
-                "null values",
-                "duplicates",
-                "what is the latency",
-                "how many rows",
-            ]
-        ):
-            return answer_clarification_question(active_question, u_clean)
-
-        # 4. If API key is available, use Gemini Agent with complete conversation context
-        if self.api_key and self.settings.ENVIRONMENT != "test":
+        chat = await self._get_chat_session()
+        if chat:
             try:
-                llm_reply = await self._generate_gemini_agent_turn(
-                    user_text=u_clean,
-                    stage=stage,
-                    active_question=active_question,
-                )
-                if llm_reply and len(llm_reply.strip()) > 10:
-                    self.conversation_history.append(
-                        {"speaker": "interviewer", "text": llm_reply.strip(), "stage": stage.value}
+                # Build contextual system message for this turn
+                q_context = ""
+                if active_question:
+                    q_context = (
+                        f"\n[SYSTEM: Active problem: '{active_question.title}' ({active_question.category.value}). "
+                        f"Problem statement: {active_question.prompt[:300]}. "
+                        f"Rubric focus: {', '.join(active_question.rubric_criteria[:4])}.]"
                     )
-                    return llm_reply.strip()
-            except Exception as exc:
-                logger.warning(
-                    "Gemini Agent turn generation failed: %s; using local cognitive engine", exc
-                )
 
-        # 5. High-Fidelity Local Cognitive Engine (Offline & Fallback)
-        reply = self._generate_local_cognitive_turn(
-            user_text=u_clean,
-            stage=stage,
-            active_question=active_question,
-        )
+                stage_context = f"[SYSTEM: Current interview stage: {stage.value}. Turn #{self.turns_in_current_stage} in this stage.]{q_context}"
+
+                # The candidate's message + stage context
+                message = f"{stage_context}\n\nCandidate: {user_text.strip()}"
+
+                response = await asyncio.wait_for(chat.send_message(message), timeout=10.0)
+                if response.text and len(response.text.strip()) > 5:
+                    reply = response.text.strip()
+                    self.conversation_history.append(
+                        {"speaker": "interviewer", "text": reply, "stage": stage.value}
+                    )
+                    return reply
+            except Exception as exc:
+                logger.warning("Chat session turn failed: %s; using fallback", exc)
+
+        # Fallback: generate a context-aware but non-LLM response
+        reply = self._generate_fallback_turn(user_text, stage, active_question)
         self.conversation_history.append(
             {"speaker": "interviewer", "text": reply, "stage": stage.value}
         )
@@ -256,11 +350,40 @@ class AgenticInterviewer:
         stage: InterviewStage,
         active_question: QuestionItem | None = None,
     ) -> str:
-        """Generate an empathetic, patient prompt when candidate has been quiet.
+        """Generate a context-aware, empathetic prompt when candidate has been quiet.
 
-        Never interrupts with new questions or advances stages unprompted.
+        Uses the persistent chat session to generate contextually appropriate nudges
+        rather than cycling through static strings.
         """
         self.silence_count += 1
+
+        chat = await self._get_chat_session()
+        if chat:
+            try:
+                q_hint = ""
+                if active_question:
+                    q_hint = f" The active problem is '{active_question.title}'."
+
+                prompt = (
+                    f"[SYSTEM: The candidate has been silent for {seconds_silent} seconds. "
+                    f"This is silence occurrence #{self.silence_count} in this segment.{q_hint} "
+                    f"Current stage: {stage.value}. "
+                    f"Check in warmly and supportively. Be brief (1-2 sentences). "
+                    f"If this is the 3rd+ silence, offer a concrete hint or suggest breaking down the problem. "
+                    f"Never repeat a previous nudge. Sound human, not robotic.]"
+                )
+
+                response = await asyncio.wait_for(chat.send_message(prompt), timeout=8.0)
+                if response.text and len(response.text.strip()) > 10:
+                    nudge = response.text.strip()
+                    self.conversation_history.append(
+                        {"speaker": "interviewer", "text": nudge, "stage": stage.value}
+                    )
+                    return nudge
+            except Exception as exc:
+                logger.warning("Chat session silence handling failed: %s", exc)
+
+        # Fallback static responses
         if self.silence_count == 1:
             return (
                 "Take your time to think through the problem. "
@@ -273,80 +396,59 @@ class AgenticInterviewer:
             )
         return "I'm here whenever you're ready to proceed. Would you like a targeted hint to help kick off your solution?"
 
-    async def _generate_gemini_agent_turn(
+    async def generate_code_feedback(
+        self,
+        code: str,
+        language: str,
+        stdout: str,
+        error: str | None = None,
+        active_question: QuestionItem | None = None,
+    ) -> str:
+        """Generate intelligent, context-aware feedback on code execution via the chat session."""
+        chat = await self._get_chat_session()
+        if chat:
+            try:
+                q_context = ""
+                if active_question:
+                    q_context = f" Problem: '{active_question.title}'."
+
+                error_info = f"\nExecution Error: {error}" if error else ""
+
+                prompt = (
+                    f"[SYSTEM: The candidate just submitted/executed {language} code.{q_context}]\n"
+                    f"```{language}\n{code[:1500]}\n```\n"
+                    f"Execution stdout: {stdout[:500]}{error_info}\n\n"
+                    f"[SYSTEM: Give brief, specific spoken feedback (2-3 sentences). "
+                    f"If there's an error, help them identify the root cause without giving the answer. "
+                    f"If it works, probe complexity or edge cases. Sound conversational.]"
+                )
+
+                response = await asyncio.wait_for(chat.send_message(prompt), timeout=10.0)
+                if response.text and len(response.text.strip()) > 10:
+                    feedback = response.text.strip()
+                    self.conversation_history.append(
+                        {
+                            "speaker": "interviewer",
+                            "text": feedback,
+                            "stage": "LIVE_CODING_SQL_PYTHON",
+                        }
+                    )
+                    return feedback
+            except Exception as exc:
+                logger.warning("Chat session code feedback failed: %s", exc)
+
+        # Fallback: basic keyword-based code feedback
+        return self._generate_fallback_code_feedback(code, language, stdout, error, active_question)
+
+    def _generate_fallback_turn(
         self,
         user_text: str,
         stage: InterviewStage,
         active_question: QuestionItem | None,
     ) -> str:
-        """Call Gemini to formulate a context-grounded, human interviewer turn."""
-        client = genai.Client(api_key=self.api_key)
-
-        claims_summary = (
-            self.claim_graph.model_dump_json() if self.claim_graph else "Senior ML Profile"
-        )
-        q_context = ""
-        if active_question:
-            q_context = (
-                f"ACTIVE PROBLEM: {active_question.title} ({active_question.category.value})\n"
-                f"STATEMENT: {active_question.prompt}\n"
-                f"RUBRIC: {', '.join(active_question.rubric_criteria)}\n"
-            )
-
-        company_context = f"Company: {self.target_company} (Archetype: {self.company_archetype}). Role: {self.target_role}.\n"
-        if self.recent_company_questions:
-            company_context += (
-                f"Recently Reported Questions at {self.target_company}:\n"
-                + "\n".join(f"- {q}" for q in self.recent_company_questions[:3])
-            )
-
-        system_instruction = (
-            f"You are {self.persona['name']}, {self.persona['title']} at {self.target_company}.\n"
-            f"Persona Style: {self.persona['style']}.\n"
-            f"{company_context}\n"
-            f"Track: {self.interview_mode.value}. Current Stage: {stage.value}.\n"
-            f"Candidate Profile: {claims_summary}\n"
-            f"{q_context}\n\n"
-            "CRITICAL BEHAVIORAL INSTRUCTIONS:\n"
-            "1. Speak naturally as an attentive, experienced human interviewer.\n"
-            "2. First directly reference and acknowledge the candidate's exact technical statements.\n"
-            "3. If in ML BREADTH: Ask targeted, quick-fire conceptual questions across ML fundamentals (metrics, bias-variance, regularizations, tree vs net, optimization).\n"
-            "4. If in ML DEPTH: Probe deeply into mathematical equations, analytical derivations, loss gradients, and attention mechanics.\n"
-            "5. If in GENERATIVE AI: Probe into RAG chunking/retrieval/reranking, vector indexing (HNSW/IVF), LoRA/QLoRA fine-tuning, KV cache optimization, and guardrails.\n"
-            "6. Keep spoken output concise (2 to 4 sentences maximum) so it feels like natural dialogue.\n"
-            "7. Zero sycophancy ('Awesome!', 'Great answer!'). Stay grounded, warm, intellectually rigorous, and professional.\n"
-        )
-
-        recent_history = self.conversation_history[-8:]
-        history_str = ""
-        for turn in recent_history:
-            spk = turn.get("speaker", "interviewer").capitalize()
-            txt = turn.get("text", "")
-            history_str += f"{spk}: {txt}\n"
-
-        prompt = f"{history_str}Candidate: {user_text}\nInterviewer (spoken reply):"
-
-        response = await client.aio.models.generate_content(
-            model=self.settings.EXTRACTOR_MODEL,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                system_instruction=system_instruction,
-                temperature=0.35,
-                max_output_tokens=300,
-            ),
-        )
-
-        return response.text or ""
-
-    def _generate_local_cognitive_turn(
-        self,
-        user_text: str,
-        stage: InterviewStage,
-        active_question: QuestionItem | None,
-    ) -> str:
-        """High-fidelity local cognitive dialogue manager for offline or zero-key operation."""
+        """Fallback response when LLM is offline or in test environments.
+        Recognizes technical concepts to provide meaningful domain follow-ups."""
         u_lower = user_text.lower()
-        t_count = self.turns_in_current_stage
 
         # --- TRACK 1: ML BREADTH ROUND ---
         if stage == InterviewStage.ML_BREADTH or self.interview_mode == InterviewMode.ML_BREADTH:
@@ -372,28 +474,21 @@ class AgenticInterviewer:
                     "Tree-based models excel on tabular data. What is the fundamental difference in how Random Forests reduce variance via bagging "
                     "versus how Gradient Boosted Trees reduce bias via sequential residual fitting?"
                 )
-
-            breadth_questions = [
-                "Let's test foundational ML breadth: compare Batch Gradient Descent, Mini-Batch SGD, and Adam. What problem does Adam's second-moment estimation solve?",
-                "How do you handle high-cardinality categorical features (like user IDs or postal codes) in a model without causing extreme memory explosion?",
-                "When scaling a binary classifier to production, how do you verify whether predicted probabilities are well-calibrated using Platt scaling or isotonic regression?",
-            ]
-            return breadth_questions[(t_count - 1) % len(breadth_questions)]
+            return (
+                f"Interesting approach. Can you walk me through the specific trade-offs you'd consider "
+                f"when deploying that in a production setting at {self.target_company}'s scale?"
+            )
 
         # --- TRACK 2: ML DEPTH ROUND ---
         if stage == InterviewStage.ML_DEPTH or self.interview_mode == InterviewMode.ML_DEPTH:
             if any(
-                w in u_lower
-                for w in ["gradient", "derivative", "sigmoid", "cross-entropy", "cross entropy"]
+                w in u_lower for w in ["loss", "gradient", "cross-entropy", "sigmoid", "softmax"]
             ):
                 return (
-                    "Good derivation. Notice that the derivative simplifies cleanly to (p - y). "
-                    "When the model is heavily confident and wrong (p ≈ 1 when y = 0), what happens to the gradient magnitude, "
-                    "and why does mean squared error fail to penalize that as sharply?"
+                    "When computing the loss gradient for sigmoid activations, explain how saturation can cause "
+                    "gradients to vanish during backpropagation, and how modern initialization or normalization stabilizes this."
                 )
-            if any(
-                w in u_lower for w in ["attention", "transformer", "flashattention", "sram", "qk"]
-            ):
+            if any(w in u_lower for w in ["attention", "transformer", "flashattention"]):
                 return (
                     "Multi-Head Attention computes softmax(QK^T / sqrt(d_k)) * V. "
                     "Walk me through the memory bottleneck of materializing the N x N attention matrix, "
@@ -404,15 +499,12 @@ class AgenticInterviewer:
                     "In Low-Rank Adaptation (LoRA), we decompose weight updates into W + B * A where B is d x r and A is r x k. "
                     "How do you initialize matrices A and B at the start of training so that the initial forward pass is an exact identity with the base model?"
                 )
+            return (
+                "Let me push on that a bit more. Can you derive the gradient for that loss function, "
+                "and explain what happens numerically when the model is highly confident but wrong?"
+            )
 
-            depth_questions = [
-                "Let's dive into deep optimization mechanics: walk me through the mathematical equations of LayerNorm versus RMSNorm. What computational advantage does RMSNorm provide during inference?",
-                "In transformer position encoding, compare Rotary Position Embedding (RoPE) with sinusoidal absolute position embeddings in terms of extrapolation beyond the context window.",
-                "Explain the exact mechanics of Knowledge Distillation: how does the temperature parameter soften probability distributions, and what does the loss gradient look like?",
-            ]
-            return depth_questions[(t_count - 1) % len(depth_questions)]
-
-        # --- TRACK 3: GENERATIVE AI & LLM TRACK ---
+        # --- TRACK 3: GENERATIVE AI & LLM ---
         if (
             stage == InterviewStage.GENERATIVE_AI
             or self.interview_mode == InterviewMode.GENERATIVE_AI_LLM
@@ -432,31 +524,26 @@ class AgenticInterviewer:
                     "KV cache memory management is the primary bottleneck for concurrent LLM serving. "
                     "How does PagedAttention eliminate internal and external memory fragmentation, and what is the latency benefit of Speculative Decoding with a small draft model?"
                 )
+            return (
+                "That's a reasonable starting point. How would you handle retrieval latency "
+                "and ensure faithfulness in the generated output at production scale?"
+            )
 
-            genai_questions = [
-                "When building an enterprise LLM agent with autonomous tool-calling, how do you structure fallback recovery when an API tool returns a malformed response or times out?",
-                "Compare the pros and cons of fine-tuning with QLoRA on a 4-bit quantized base model versus using in-context learning with dynamic semantic few-shot selection.",
-                "How would you build an automated evaluation framework to benchmark hallucination rates and faithfulness in a production RAG application?",
-            ]
-            return genai_questions[(t_count - 1) % len(genai_questions)]
-
-        # --- TRACK 4: LIVE CODING & SYSTEM DESIGN ---
+        # --- TRACK 4: CODING & DESIGN ---
         if stage == InterviewStage.LIVE_CODING_SQL_PYTHON:
             if any(w in u_lower for w in ["window", "partition", "row_number", "dense_rank"]):
                 return (
                     "Using window functions with partitioning is a clean strategy. "
-                    "Pay close attention to how ties are ranked and whether your window frame includes unbounded preceding rows. "
                     "How do you plan to handle partitions with null or missing timestamps?"
                 )
             if any(w in u_lower for w in ["dict", "hash", "map", "set", "o(1)"]):
                 return (
                     "Using a hash map gives O(1) expected lookup. "
-                    "What is your memory footprint if the input cardinality reaches 50 million unique keys? "
-                    "Could we prune keys in-place or use a generator to preserve linear space?"
+                    "What is your memory footprint if the input cardinality reaches 50 million unique keys?"
                 )
             return (
-                f"That's a sound initial direction for '{active_question.title if active_question else 'this problem'}'. "
-                "Before you begin typing in the code editor, walk me through the key invariants of your loop or query, and its asymptotic Big-O runtime."
+                "Understood. Before you start coding, can you walk me through the key invariants "
+                "of your approach and the expected Big-O time and space complexity?"
             )
 
         if stage == InterviewStage.ML_SYSTEM_DESIGN:
@@ -466,24 +553,22 @@ class AgenticInterviewer:
                     f"At {self.target_company}'s scale, how do you handle feature freshness when network latency causes out-of-order writes?"
                 )
             return (
-                f"Understood. When designing this architecture for {self.target_company}, what are your p99 latency budgets per microservice, "
+                "Makes sense. What are your p99 latency budgets per component, "
                 "and where are the potential single points of failure under peak traffic?"
             )
 
-        # Default Stage & Wrap-up
         if stage == InterviewStage.WRAP_UP:
             return (
-                f"At {self.target_company}, we value strong engineering ownership and empirical statistical rigor. "
                 "It was a pleasure working through these technical problems with you today. "
                 "Do you have any questions for me about our architecture, team dynamics, or technology stack?"
             )
 
         return (
-            f"Understood. Looking at how this applies to {self.target_role} at {self.target_company}, "
-            "walk me through your next technical step."
+            f"Got it. Looking at how that applies to the {self.target_role} role at {self.target_company}, "
+            "what would be your next technical step?"
         )
 
-    def generate_code_feedback(
+    def _generate_fallback_code_feedback(
         self,
         code: str,
         language: str,
@@ -491,35 +576,29 @@ class AgenticInterviewer:
         error: str | None = None,
         active_question: QuestionItem | None = None,
     ) -> str:
-        """Provide intelligent, constructive spoken feedback on code execution."""
+        """Fallback code feedback when LLM is unavailable."""
         if error:
             err_msg = error.strip()
             if "Traceback" in err_msg:
                 lines = err_msg.split("\n")
                 last_line = lines[-1] if lines else err_msg
                 return (
-                    f"I see an unhandled exception during execution: '{last_line[:120]}'. "
-                    "Take a close look at your variable bindings, array bounds, or empty collection cases. "
-                    "How would you refactor your code to handle that edge case?"
+                    f"I see an unhandled exception: '{last_line[:120]}'. "
+                    "Take a close look at your variable bindings and edge cases. "
+                    "What do you think is causing this?"
                 )
             return (
-                f"There is a syntax or query execution error: '{err_msg[:120]}'. "
-                "Check your table aliases, commas, and column references. What do you think caused this?"
+                f"There's an execution error: '{err_msg[:120]}'. "
+                "Check your syntax and references. What do you think caused this?"
             )
 
         if stdout and ("PASS" in stdout.upper() or "PASSED" in stdout.upper()):
             return (
-                "All test assertions passed successfully! Now, walk me through the asymptotic Big-O runtime and "
-                "space complexity of your solution, and explain how this implementation scales to 50 million records."
-            )
-
-        if language == "sql" and "rows returned" in stdout.lower():
-            return (
-                f"Your query executed cleanly ({stdout}). Take a look at the resulting table in your console. "
-                "Do the cohort percentages and column outputs match what you expected? Walk me through your query logic."
+                "All test assertions passed. Now walk me through the Big-O runtime and "
+                "space complexity, and how this scales to large inputs."
             )
 
         return (
-            "Code execution completed. Walk me through the mechanics of your solution, "
-            "and what edge cases you've accounted for in this implementation."
+            "Code execution completed. Walk me through the mechanics of your solution "
+            "and what edge cases you've accounted for."
         )

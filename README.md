@@ -514,6 +514,60 @@ If a candidate pauses for 25–45 seconds to think through a derivation or syste
 
 ---
 
+## 🧠 Comprehensive Map of ML, LLM & AI Models Used Across the Platform
+
+Every AI/ML component is purposefully separated by latency budget and reasoning requirements:
+
+| Model / Technology | Component File | Role & Architectural Purpose | Mode / Input Modality |
+| :--- | :--- | :--- | :--- |
+| **`gemini-2.5-pro`** (`INTERVIEWER_MODEL`) | `backend/app/services/agentic_interviewer.py` | **Persistent Multi-Turn Dialogue Agent:** Uses Google GenAI native chat session (`client.aio.chats.create`). Retains full conversational memory across turns, enforces strict zero-sycophancy rules, directly acknowledges candidate answers before asking follow-ups, and handles context-aware silence nudges and code feedback. | Multi-turn async chat session |
+| **`gemini-2.5-flash-native-audio-preview`** (`LIVE_MODEL`) | `backend/app/services/gemini_live.py` | **Fast Loop Multimodal WebSocket:** Bidirectional low-latency streaming multiplexer. Ingests 16kHz PCM candidate microphone audio and outputs 24kHz PCM synthesized speech chunks and live captions. | Real-time bidirectional streaming |
+| **`gemini-2.5-pro`** (`REASONING_MODEL`) | `backend/app/services/shadow_supervisor.py` | **Slow Loop Async Shadow Supervisor:** Asynchronously inspects candidate utterances and code diffs in the background. Detects $O(N^2)$ algorithmic loops, data leakage, missing window partitioning, or shallow math claims, dynamically injecting silent follow-up directives to the interviewer. | Background async reasoning |
+| **`gemini-2.5-flash`** (`EXTRACTOR_MODEL`) | `backend/app/services/resume_parser.py` | **Resume Claim Graph Extractor:** Parses uploaded PDF resumes into a high-fidelity structured Pydantic `CandidateClaimGraph` (projects, metrics, tech stack, and quantitative production claims) via JSON schema enforcement. | Structured JSON output |
+| **`gemini-2.5-pro`** (`REASONING_MODEL`) | `backend/app/services/rubric_evaluator.py` | **Post-Interview BARS Evaluator & Mentor:** Generates rigorous 1–5 Behaviorally Anchored Rating Scale (BARS) evaluations across 4 core competencies, providing unvarnished hiring manager feedback, honest 0.0 scores for silent sessions, and 60-second gold-standard STAR rewrites for every question asked. | Complex evaluation report generation |
+| **Native Google Search Grounding** | `backend/app/services/gemini_search_grounding.py` | **Real-Time Company Interview Retrieval:** Uses official `types.Tool(google_search=types.GoogleSearch())` to pre-fetch reported 2025/2026 interview questions for target companies (e.g., Swiggy, CRED, Google, Meta, Stripe) without 3rd-party search APIs. | Real-time Web Search Grounding |
+| **Pyodide (Python WASM)** | `frontend/src/app/interview/[id]/page.tsx` | **Client-Side Python Sandbox:** Executes Python algorithms, self-attention layers, and streaming quantiles directly inside the browser with unit test assertions and zero backend compute cost. | In-browser WebAssembly execution |
+| **DuckDB-WASM** | `frontend/src/app/interview/[id]/page.tsx` | **Client-Side Analytical SQL Engine:** In-browser columnar database running SQL cohort retention queries, rolling anomaly detection, and window rank functions on pre-seeded tables. | In-browser WebAssembly database |
+| **Web Speech API & VoiceManager** | `frontend/src/lib/voiceManager.ts` | **Acoustic Echo Suppression & Synthesis:** Chromium-resilient deterministic persona voice synthesis (`voiceManager`) with acoustic guard windows, Spacebar instant barge-in, and echo loop cancellation. | Browser native speech synthesis/recognition |
+
+---
+
+## 📚 Where & How the Question Bank is Used Across the Platform
+
+The question bank provides a diverse, extensible repository of technical interview problems designed for continuous practice over weeks without getting stuck in a repetitive loop:
+
+### 1. Where the Question Bank Lives
+- **Definition:** Located in `backend/app/services/question_bank.py` (`QUESTIONS_BANK`).
+- **Diversity:** Includes 21 curated problems spanning 3 categories:
+  - **7 SQL Problems (DuckDB):** Cohort retention, rolling 30-day anomaly detection, top-K window ranking, cumulative sessionization, customer lifetime value deciles, inventory turnover, and multi-touch attribution. Pre-seeded with realistic database tables (`users`, `transactions`, `events`, `predictions`).
+  - **7 Python Algorithmic & ML Problems:** Scaled dot-product self-attention, streaming quantile estimation (Greenwald-Khanna), AUC-ROC curve calculation from scratch, IoU bounding box computation, non-maximum suppression (NMS), token-bucket rate limiter, and LRU cache with TTL. Each comes with starter code and automated test assertions.
+  - **7 ML System Design Prompts:** Hyperlocal delivery dispatch & ETA at Swiggy scale, real-time UPI fraud detection at Razorpay, two-tower neural retrieval at Netflix, LLM RAG customer support system, real-time demand forecasting, multimodal visual search, and automated model drift & continuous training pipeline. Includes rubrics and scale SLA targets.
+
+### 2. How Questions are Selected and Used in the Pipeline
+1. **Session Creation (`POST /api/session/init`):**
+   - If a specific `question_id` is supplied, that question is selected.
+   - If no `question_id` is specified, `get_random_question()` automatically draws a fresh, randomized question tailored to the selected interview track. Each new interview session starts with a different problem, avoiding locking into the same challenge.
+2. **FSM Stage Progression (`fsm_orchestrator.py`):**
+   - When transitioning into `LIVE_CODING_SQL_PYTHON`, the FSM automatically verifies or picks an active coding problem from the bank.
+   - When transitioning into `ML_SYSTEM_DESIGN`, it picks an active system design problem and rubric.
+   - The question's prompt, starter code, and database seeds are pushed to the frontend via the `fsm_snapshot` WebSocket event.
+3. **In-Session Dynamic Question Switching (`POST /api/session/{id}/advance-question`):**
+   - If you have already solved a question or want to practice a different scenario during an active call, you can click **Switch Question** in the workbench or invoke the API to immediately swap to another problem from the bank.
+4. **Agentic Probing & Hint Context Injection (`agentic_interviewer.py`):**
+   - The active question's title, statement, category, and rubric criteria are injected into the persistent Gemini chat session context `[SYSTEM: Active problem: ...]`. This allows Dr. Elena, Alex, or Sarah to guide you on edge cases, provide progressive hints, and probe computational complexity tailored to that specific problem.
+5. **Interactive Client Workbench (`page.tsx`):**
+   - When an SQL question is active, the Monaco editor loads the SQL starter query, and DuckDB-WASM executes the seed script.
+   - When a Python question is active, Pyodide executes the solution against the question's unit test assertions.
+   - When a System Design question is active, Excalidraw opens for whiteboard diagramming.
+
+### 3. How to Add More Questions to the Bank
+To add your own custom questions for multi-week practice:
+1. Open `backend/app/services/question_bank.py`.
+2. Append a new `QuestionItem(...)` to `QUESTIONS_BANK` with your desired category (`SQL`, `PYTHON`, or `ML_SYSTEM_DESIGN`), prompt, starter code, seed SQL or unit tests, and rubric criteria.
+3. The platform will automatically include your new questions in randomized rotation!
+
+---
+
 ## 🎯 7 Specialized Interview Tracks
 
 Prepare holistically for any stage in an engineering recruitment pipeline:

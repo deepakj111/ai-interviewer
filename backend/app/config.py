@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     LIVE_MODEL: str = "gemini-2.5-flash-native-audio-preview-09-2025"
     REASONING_MODEL: str = "gemini-2.5-pro"
     EXTRACTOR_MODEL: str = "gemini-2.5-flash"
+    INTERVIEWER_MODEL: str = "gemini-2.5-pro"  # Persistent chat model for human-like dialogue
 
     # Audio Streaming Configuration
     AUDIO_INPUT_SAMPLE_RATE: int = 16000  # 16kHz PCM

@@ -388,11 +388,15 @@ class LiveInterviewSessionHandler:
                     )
                     current_stg = self.fsm.current_stage if self.fsm else InterviewStage.INTRO
 
-                    reply = await self.agent.generate_turn_response(
-                        user_text=user_text,
-                        stage=current_stg,
-                        active_question=active_q,
-                    )
+                    try:
+                        reply = await self.agent.generate_turn_response(
+                            user_text=user_text,
+                            stage=current_stg,
+                            active_question=active_q,
+                        )
+                    except Exception as turn_exc:
+                        logger.error("Error generating turn response: %s", turn_exc)
+                        reply = "That makes sense. Can you walk me through your engineering design choices and the trade-offs you considered?"
 
                     await self.websocket.send_json(
                         {
@@ -425,16 +429,18 @@ class LiveInterviewSessionHandler:
                         if self.fsm and self.fsm.active_question_id
                         else None
                     )
-                    if self.engine:
-                        code_reply = self.engine.generate_code_feedback(
+                    try:
+                        # Use the agent's LLM-powered code feedback (persistent chat context)
+                        code_reply = await self.agent.generate_code_feedback(
                             code=code,
                             language=lang,
                             stdout=stdout,
                             error=error,
                             active_question=active_q,
                         )
-                    else:
-                        code_reply = "Code update received. Walk me through your design and how this solution handles scale."
+                    except Exception as code_exc:
+                        logger.error("Error generating code feedback: %s", code_exc)
+                        code_reply = "I see your code execution update. Walk me through the mechanics of your solution and the edge cases you've accounted for."
 
                     await self.websocket.send_json(
                         {

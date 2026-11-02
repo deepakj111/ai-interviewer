@@ -126,6 +126,9 @@ export default function InterviewRoomPage() {
   const speechSendTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const isMicMutedRef = useRef(false);
   const isMountedRef = useRef(true);
+  const interviewerSpokeStartTimeRef = useRef<number>(0);
+  const interviewerSpokenTextRef = useRef<string>("");
+  const thinkingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Auto-detect Bluetooth/Headset audio input devices
   useEffect(() => {
@@ -226,13 +229,19 @@ export default function InterviewRoomPage() {
     let lastPingStage = 0; // 0: none, 1: 30s, 2: 65s, 3: 105s
 
     const silenceCheck = setInterval(() => {
+      const idleSec = Math.floor((Date.now() - lastCandidateActivityRef.current) / 1000);
+
+      // Clear stale uncommitted speech buffer if idle for over 15 seconds
+      if (idleSec >= 15 && speechBufferRef.current.length > 0) {
+        speechBufferRef.current = "";
+        setLiveSpeechPreview("");
+      }
+
       // Don't ping if interviewer is speaking, candidate is coding/drawing, or candidate has active speech buffer
       if (isSpeakingRef.current || isCandidateWorking || speechBufferRef.current.length > 0) {
         lastPingStage = 0;
         return;
       }
-
-      const idleSec = Math.floor((Date.now() - lastCandidateActivityRef.current) / 1000);
 
       // Level 1: 30s of silence -> warm check-in
       if (idleSec >= 30 && idleSec < 65 && lastPingStage < 1) {
@@ -311,8 +320,23 @@ export default function InterviewRoomPage() {
         speechSendTimeoutRef.current = null;
       }
 
+      // Reset speech recognition session so results don't compound into future turns
+      if (speechRecRef.current) {
+        try {
+          speechRecRef.current.abort();
+        } catch (_) {}
+      }
+
       if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
         setIsInterviewerThinking(true);
+        if (thinkingTimeoutRef.current) {
+          clearTimeout(thinkingTimeoutRef.current);
+        }
+        // Safety watchdog: never leave candidate in 'thinking' state for > 12s
+        thinkingTimeoutRef.current = setTimeout(() => {
+          setIsInterviewerThinking(false);
+        }, 12000);
+
         socketRef.current.send(
           JSON.stringify({
             type: "text_turn",
@@ -347,11 +371,14 @@ export default function InterviewRoomPage() {
       if (!isTtsEnabled) return;
       if (hasLiveAudioRef.current) return; // Use Gemini Live PCM stream if actively delivering audio
 
+      interviewerSpokeStartTimeRef.current = Date.now();
+      interviewerSpokenTextRef.current = text.toLowerCase();
       isSpeakingRef.current = true;
       setIsSpeaking(true);
 
       voiceManager.speak(text, {
         onStart: () => {
+          interviewerSpokeStartTimeRef.current = Date.now();
           isSpeakingRef.current = true;
           setIsSpeaking(true);
         },
@@ -461,25 +488,45 @@ export default function InterviewRoomPage() {
         };
 
         recognition.onresult = (event: any) => {
+          // 1. Acoustic Self-Interruption Protection: When interviewer is speaking
+          if (isSpeakingRef.current) {
+            const elapsedSpeakingMs = Date.now() - (interviewerSpokeStartTimeRef.current || 0);
+
+            // Read the newly detected words
+            let bargeText = "";
+            for (let i = event.resultIndex; i < event.results.length; i++) {
+              bargeText += event.results[i][0].transcript + " ";
+            }
+            const cleanBarge = bargeText.trim();
+            const words = cleanBarge.split(/\s+/).filter(Boolean);
+
+            // Allow hands-free voice barge-in ONLY IF:
+            // User has headset active, interviewer has been speaking for > 2.5s (grace period),
+            // and user spoke at least 3 substantial words (>= 12 chars).
+            // Spacebar and on-screen button are always available for instant zero-latency barge-in.
+            const canBargeIn = isHeadsetMode && elapsedSpeakingMs > 2500 && cleanBarge.length >= 12 && words.length >= 3;
+            if (canBargeIn) {
+              handleInterrupt();
+            } else {
+              // Completely drop microphone pickup while interviewer is speaking to avoid echo loops
+              return;
+            }
+          }
+
+          // 2. Echo Cooldown: Ignore microphone pickup for 1000ms after interviewer stops speaking
+          if (Date.now() - lastSpokeTimestampRef.current < 1000) {
+            return;
+          }
+
           lastCandidateActivityRef.current = Date.now();
           setSilencePrompt(null);
 
-          // Aggregate all transcript segments from the speech recognition session
+          // 3. Aggregate transcript segments from current active recognition session
           let fullTranscript = "";
           for (let i = 0; i < event.results.length; i++) {
             fullTranscript += event.results[i][0].transcript + " ";
           }
           const cleanTranscript = fullTranscript.trim();
-
-          // Hands-free barge-in: If candidate speaks while interviewer is speaking
-          if (cleanTranscript.length > 2 && isSpeakingRef.current) {
-            handleInterrupt();
-          }
-
-          // Echo filter: If on laptop speakers (not headset) and interviewer just finished (<800ms)
-          if (!isHeadsetMode && (isSpeakingRef.current || Date.now() - lastSpokeTimestampRef.current < 800)) {
-            return;
-          }
 
           if (cleanTranscript.length > 0) {
             speechBufferRef.current = cleanTranscript;
@@ -618,6 +665,10 @@ export default function InterviewRoomPage() {
             setActiveTab("prompt");
           }
         } else if (msg.type === "transcript_caption") {
+          if (thinkingTimeoutRef.current) {
+            clearTimeout(thinkingTimeoutRef.current);
+            thinkingTimeoutRef.current = null;
+          }
           setIsInterviewerThinking(false);
           setLatestCaption(msg.text);
           setTranscripts((prev) => [...prev, { speaker: msg.speaker, text: msg.text }]);

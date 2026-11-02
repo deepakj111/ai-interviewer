@@ -47,6 +47,7 @@ from app.services.question_bank import (
     get_all_questions,
     get_question_by_id,
     get_questions_by_category,
+    get_random_question,
 )
 from app.services.resume_parser import extract_text_from_pdf, generate_claim_graph
 from app.services.rubric_evaluator import evaluate_interview_session
@@ -118,6 +119,22 @@ async def init_session(
         target_company=target_company,
         api_key=api_key,
     )
+
+    if not question_id:
+        if interview_mode == InterviewMode.SQL_PYTHON_CODING:
+            random_q = (
+                get_random_question(category=QuestionCategory.PYTHON) or get_random_question()
+            )
+            question_id = random_q.id if random_q else None
+        elif interview_mode == InterviewMode.ML_SYSTEM_DESIGN:
+            random_q = (
+                get_random_question(category=QuestionCategory.ML_SYSTEM_DESIGN)
+                or get_random_question()
+            )
+            question_id = random_q.id if random_q else None
+        else:
+            random_q = get_random_question()
+            question_id = random_q.id if random_q else None
 
     fsm = InterviewFSM(mode=interview_mode, active_question_id=question_id)
 
