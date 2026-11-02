@@ -179,7 +179,9 @@ class DimensionScore(BaseModel):
     """Score and behavioral evidence for a single rubric dimension."""
 
     dimension: str
-    score: int = Field(..., ge=1, le=5, description="1 to 5 BARS score")
+    score: int = Field(
+        ..., ge=0, le=5, description="0 to 5 BARS score (0 = no evidence / unanswered)"
+    )
     strengths: list[str] = Field(default_factory=list)
     weaknesses: list[str] = Field(default_factory=list)
     rationale: str
@@ -188,10 +190,10 @@ class DimensionScore(BaseModel):
 class BARSReport(BaseModel):
     """Complete post-interview evaluation report."""
 
-    overall_score: float = Field(..., ge=1.0, le=5.0)
+    overall_score: float = Field(..., ge=0.0, le=5.0)
     recommendation: str = Field(
         ...,
-        description="Hiring recommendation: Strong Hire, Hire, Leaning Hire, Leaning No Hire, No Hire",
+        description="Hiring recommendation: Strong Hire, Hire, Leaning Hire, Leaning No Hire, No Hire, Strong No Hire",
     )
     technical_depth: DimensionScore
     production_tradeoffs: DimensionScore

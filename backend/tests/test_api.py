@@ -76,7 +76,8 @@ async def test_session_lifecycle_and_evaluation():
         eval_resp = await ac.post(f"/api/session/{session_id}/evaluate")
         assert eval_resp.status_code == 200
         eval_data = eval_resp.json()
-        assert 1.0 <= eval_data["overall_score"] <= 5.0
+        assert 0.0 <= eval_data["overall_score"] <= 5.0
+        assert "No Hire" in eval_data["recommendation"]
         assert len(eval_data["question_critiques"]) >= 1
 
         # 5. Fetch saved report

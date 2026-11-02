@@ -55,7 +55,11 @@ async def test_rubric_evaluator_report_structure():
         {
             "speaker": "candidate",
             "stage": "RESUME_DEEP_DIVE",
-            "text": "We tracked daily Wasserstein distance across embedding centroids.",
+            "text": (
+                "We tracked daily Wasserstein distance across embedding centroids. "
+                "When distance exceeded two standard deviations over rolling 7-day baselines, "
+                "we triggered automated retraining and alerted the on-call engineer."
+            ),
         },
     ]
 
@@ -67,11 +71,11 @@ async def test_rubric_evaluator_report_structure():
     )
 
     assert report is not None
-    assert 1.0 <= report.overall_score <= 5.0
-    assert report.technical_depth.score in [1, 2, 3, 4, 5]
-    assert report.production_tradeoffs.score in [1, 2, 3, 4, 5]
-    assert report.code_quality.score in [1, 2, 3, 4, 5]
-    assert report.communication_clarity.score in [1, 2, 3, 4, 5]
+    assert 0.0 <= report.overall_score <= 5.0
+    assert report.technical_depth.score in [0, 1, 2, 3, 4, 5]
+    assert report.production_tradeoffs.score in [0, 1, 2, 3, 4, 5]
+    assert report.code_quality.score in [0, 1, 2, 3, 4, 5]
+    assert report.communication_clarity.score in [0, 1, 2, 3, 4, 5]
     assert len(report.question_critiques) >= 1
 
     for critique in report.question_critiques:
@@ -95,9 +99,8 @@ async def test_rubric_evaluator_abrupt_termination():
     )
 
     assert report is not None
-    assert report.overall_score < 2.0
+    assert report.overall_score == 0.0
     assert "No Hire" in report.recommendation
-    assert "abruptly" in report.summary.lower() or "abruptly" in report.recommendation.lower()
-    assert report.technical_depth.score == 1
-    assert report.code_quality.score == 1
+    assert report.technical_depth.score == 0
+    assert report.code_quality.score == 0
     assert len(report.question_critiques) >= 1

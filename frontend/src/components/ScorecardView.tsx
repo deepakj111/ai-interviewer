@@ -161,15 +161,21 @@ ${data.critical_improvement_areas.map((i) => `• ${i}`).join("\n")}
             <div className="h-12 w-px bg-slate-800" />
 
             <div className="text-center pr-2">
-              <span
-                className={`inline-block px-3.5 py-1.5 rounded-full text-xs font-bold uppercase tracking-wider ${
-                  data.recommendation.toLowerCase().includes("hire")
-                    ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
-                    : "bg-rose-500/20 text-rose-300 border border-rose-500/30"
-                }`}
-              >
-                {data.recommendation}
-              </span>
+              {(() => {
+                const recLower = data.recommendation.toLowerCase();
+                const isHire = !recLower.includes("no hire") && recLower.includes("hire");
+                return (
+                  <span
+                    className={`inline-block px-3.5 py-1.5 rounded-full text-xs font-bold uppercase tracking-wider ${
+                      isHire
+                        ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
+                        : "bg-rose-500/20 text-rose-300 border border-rose-500/30"
+                    }`}
+                  >
+                    {data.recommendation}
+                  </span>
+                );
+              })()}
               <p className="text-xs font-medium text-slate-400 mt-1 uppercase tracking-wider">
                 Verdict
               </p>
@@ -270,15 +276,21 @@ ${data.critical_improvement_areas.map((i) => `• ${i}`).join("\n")}
             <CheckCircle2 className="w-5 h-5" /> Key Technical Strengths
           </h3>
           <ul className="space-y-2.5">
-            {data.key_strengths.map((str, idx) => (
-              <li
-                key={idx}
-                className="text-xs text-slate-300 flex items-start gap-2.5 bg-slate-950/40 p-3 rounded-xl border border-slate-800/60 leading-relaxed"
-              >
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 mt-1.5 shrink-0" />
-                <span>{str}</span>
+            {data.key_strengths.length === 0 ? (
+              <li className="text-xs text-slate-500 italic p-3 rounded-xl bg-slate-950/40 border border-slate-800/60 leading-relaxed">
+                No technical strengths demonstrated. The candidate concluded the session without providing substantive technical answers.
               </li>
-            ))}
+            ) : (
+              data.key_strengths.map((str, idx) => (
+                <li
+                  key={idx}
+                  className="text-xs text-slate-300 flex items-start gap-2.5 bg-slate-950/40 p-3 rounded-xl border border-slate-800/60 leading-relaxed"
+                >
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 mt-1.5 shrink-0" />
+                  <span>{str}</span>
+                </li>
+              ))
+            )}
           </ul>
         </div>
 

@@ -18,7 +18,7 @@ def _generate_abrupt_termination_report(
     last_stage: str,
     interviewer_prompts: list[str],
 ) -> BARSReport:
-    """Generate a realistic, unvarnished evaluation for an interview ended prematurely without candidate answers."""
+    """Generate an honest, unvarnished 0.0 evaluation for an interview ended prematurely without candidate answers."""
     last_question = (
         interviewer_prompts[-1]
         if interviewer_prompts
@@ -26,77 +26,71 @@ def _generate_abrupt_termination_report(
     )
 
     return BARSReport(
-        overall_score=1.2,
-        recommendation="No Hire (Abruptly Terminated / Incomplete Evidence)",
+        overall_score=0.0,
+        recommendation="Strong No Hire (Zero Technical Substance / Unanswered)",
         technical_depth=DimensionScore(
             dimension="Technical Depth & Math",
-            score=1,
+            score=0,
             strengths=[],
             weaknesses=[
-                "Session was terminated before mathematical derivations or algorithm choices could be evaluated.",
-                "Zero candidate answers recorded for fundamental ML and statistical mechanics.",
+                "Zero candidate answers provided for technical concepts, loss formulations, or algorithmic trade-offs.",
+                "Session concluded before core engineering or mathematical competencies could be demonstrated.",
             ],
-            rationale="Insufficient technical evidence. The interview ended prematurely during the introductory/problem setup stage.",
+            rationale="No technical evidence provided. Candidate did not answer technical questions.",
         ),
         production_tradeoffs=DimensionScore(
             dimension="Production & Business Trade-offs",
-            score=1,
+            score=0,
             strengths=[],
             weaknesses=[
-                "Did not demonstrate awareness of latency SLAs, inference budgets, or data drift.",
-                "No production architecture trade-offs were articulated.",
+                "Zero discussion of latency SLAs, inference budgets, data drift, or cold-start handling.",
+                "Did not participate in architectural design or production engineering discussions.",
             ],
-            rationale="The candidate did not reach the system design or production scaling discussion.",
+            rationale="Candidate did not reach or address production architecture trade-offs.",
         ),
         code_quality=DimensionScore(
             dimension="Code/SQL Quality & Complexity",
-            score=1,
+            score=0,
             strengths=[],
             weaknesses=[
-                "No working code, SQL query, or algorithmic solution was submitted or executed.",
-                "Big-O computational complexity could not be benchmarked.",
+                "No code, SQL query, or algorithmic solution was written or executed in the sandbox.",
+                "Computational complexity (Big-O runtime/memory) could not be benchmarked.",
             ],
-            rationale="Zero code submissions were provided in the Monaco IDE / WASM sandbox before exiting.",
+            rationale="Zero code submissions were provided in the Monaco IDE / WASM sandbox.",
         ),
         communication_clarity=DimensionScore(
             dimension="Communication Clarity (STAR/Pyramid)",
-            score=1,
-            strengths=[
-                "Interview environment and room connection successfully initialized.",
-            ],
+            score=0,
+            strengths=[],
             weaknesses=[
-                "Candidate ended the interview abruptly without answering interviewer prompts.",
-                "Did not employ STAR framing or structured problem clarification.",
+                "Candidate ended the session without participating in the technical dialogue or answering prompts.",
+                "Did not employ STAR framing or structured clarification.",
             ],
-            rationale="Abrupt session termination without addressing the technical problem statement.",
+            rationale="Session concluded without candidate engaging in technical communication.",
         ),
         summary=(
-            f"The interview session for {target_role} was terminated abruptly during the {last_stage} stage. "
-            "No technical answers, code implementations, or architectural diagrams were submitted for evaluation. "
-            "A hiring recommendation cannot be made due to complete lack of technical signal."
+            f"The interview session for {target_role} was concluded without substantive candidate answers or code submissions. "
+            "Zero technical competency or problem-solving capability was demonstrated. "
+            "The hiring verdict is an unambiguous Strong No Hire (0.0 / 5.0) due to complete absence of technical evidence."
         ),
-        key_strengths=[
-            "Successfully connected to the interview workspace and reviewed problem requirements",
-        ],
+        key_strengths=[],
         critical_improvement_areas=[
-            "Complete the full technical loop to allow evaluation of core engineering competencies",
-            "Engage directly with the interviewer's problem statements and articulate initial clarifying questions",
-            "Write and execute verifiable code in the IDE to demonstrate algorithmic problem solving",
+            "Actively answer the interviewer's technical questions and explain your engineering approach verbally.",
+            "Write and execute runnable code in the live sandbox during coding problems.",
+            "Communicate your thought process and trade-offs out loud using the STAR framework.",
         ],
         question_critiques=[
             QuestionCritique(
                 question_asked=last_question[:250],
-                candidate_answer_summary="Candidate concluded the call abruptly without providing a verbal or written answer.",
+                candidate_answer_summary="Candidate remained silent or concluded the call without providing a technical answer.",
                 hiring_manager_critique=(
-                    "In top-tier technical interviews, leaving without engaging or answering the opening problem statement "
-                    "is an immediate disqualifier. Even when encountering unfamiliar domains, candidates are expected to ask clarifying questions, "
-                    "propose brute-force baselines, and communicate their reasoning."
+                    "In top-tier technical interviews, leaving questions unanswered is an immediate disqualifier. "
+                    "Interviewers expect candidates to speak up, clarify ambiguities, propose baselines, and communicate their reasoning."
                 ),
                 gold_standard_rewrite=(
-                    "Thank you for the problem setup. Before diving into implementation, I want to clarify three key constraints: "
-                    "First, what is the expected throughput and p99 inference latency SLA? Second, how should we handle missing values or cold-start entities? "
-                    "Third, are we optimizing primarily for memory footprint or computational runtime? I will start with a clear baseline approach, "
-                    "analyze its time and space complexity, and then iterate toward an optimal vectorized solution."
+                    "Thank you for the problem setup. To tackle this systematically: First, let's establish key constraints—"
+                    "what is our target latency SLA and expected QPS? Second, I'll lay out a clean baseline approach and analyze its time/space complexity. "
+                    "Third, we will iterate toward an optimized architecture and address production edge cases like data drift and cold starts."
                 ),
             ),
         ],
@@ -112,26 +106,52 @@ def _generate_dynamic_evaluated_report(
     interviewer_turns = [t for t in transcripts if t.get("speaker") == "interviewer"]
     code_snapshots = [t.get("code_snapshot") for t in transcripts if t.get("code_snapshot")]
 
-    # Check candidate code
     has_code = len(code_snapshots) > 0
     total_candidate_words = sum(len(t.get("text", "").split()) for t in candidate_turns)
 
-    # Base scores on actual participation
-    code_score = 3 if has_code else 2
-    tech_score = 3 if total_candidate_words > 50 else 2
-    tradeoff_score = 3 if total_candidate_words > 100 else 2
-    comm_score = 3 if len(candidate_turns) >= 2 else 2
+    # If zero or trivial candidate words (< 25 words and no code), assign honest 0.0
+    if len(candidate_turns) == 0 or (total_candidate_words < 25 and not has_code):
+        return _generate_abrupt_termination_report(
+            target_role=target_role,
+            last_stage=transcripts[-1].get("stage", "INTRO") if transcripts else "INTRO",
+            interviewer_prompts=[
+                t.get("text", "") for t in interviewer_turns if t.get("text", "").strip()
+            ],
+        )
 
-    overall = round((code_score + tech_score + tradeoff_score + comm_score) / 4.0, 2)
-    recommendation = (
-        "Hire"
-        if overall >= 3.5
-        else "Leaning Hire"
-        if overall >= 3.0
-        else "Leaning No Hire"
-        if overall >= 2.0
-        else "No Hire"
-    )
+    # Rigorous unvarnished scoring based on demonstrated technical substance
+    if total_candidate_words < 50 and not has_code:
+        tech_score = 1
+        tradeoff_score = 1
+        code_score = 0
+        comm_score = 1
+    elif total_candidate_words < 100:
+        tech_score = 2
+        tradeoff_score = 1
+        code_score = 2 if has_code else 0
+        comm_score = 2
+    elif total_candidate_words < 250:
+        tech_score = 3
+        tradeoff_score = 2
+        code_score = 3 if has_code else 1
+        comm_score = 3
+    else:
+        tech_score = 4 if total_candidate_words > 400 else 3
+        tradeoff_score = 3
+        code_score = 4 if has_code else 2
+        comm_score = 4 if len(candidate_turns) >= 4 else 3
+
+    overall = round((code_score + tech_score + tradeoff_score + comm_score) / 4.0, 1)
+    if overall == 0.0:
+        recommendation = "Strong No Hire"
+    elif overall < 2.0:
+        recommendation = "Strong No Hire" if overall < 1.3 else "No Hire"
+    elif overall < 3.0:
+        recommendation = "Leaning No Hire"
+    elif overall < 3.8:
+        recommendation = "Leaning Hire"
+    else:
+        recommendation = "Hire"
 
     last_q = (
         interviewer_turns[-1].get("text", "")
@@ -254,10 +274,12 @@ async def evaluate_interview_session(
 
     total_candidate_words = sum(len(t.get("text", "").split()) for t in candidate_turns)
 
-    # Check for abrupt termination (zero candidate turns, or fewer than 6 candidate words and no code submitted)
-    if len(candidate_turns) == 0 or (total_candidate_words < 6 and len(code_snapshots) == 0):
+    # Check for non-participation or abrupt termination (zero candidate turns, or fewer than 25 candidate words and no code submitted)
+    if len(candidate_turns) == 0 or (total_candidate_words < 25 and len(code_snapshots) == 0):
         logger.info(
-            "Session ended prematurely without substantive candidate turns; generating truthful abrupt termination report"
+            "Session ended without substantive candidate answers (turns=%d, words=%d); generating 0.0 scorecard",
+            len(candidate_turns),
+            total_candidate_words,
         )
         return _generate_abrupt_termination_report(target_role, last_stage, interviewer_prompts)
 
