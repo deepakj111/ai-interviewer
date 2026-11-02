@@ -30,13 +30,13 @@ async def test_questions_endpoints():
         response = await ac.get("/api/questions")
         assert response.status_code == 200
         questions = response.json()
-        assert len(questions) == 15
+        assert len(questions) == 21
 
         # Filter by SQL
         sql_resp = await ac.get("/api/questions?category=SQL")
         assert sql_resp.status_code == 200
         sql_q = sql_resp.json()
-        assert len(sql_q) == 5
+        assert len(sql_q) == 7
 
         # Get specific question
         single_resp = await ac.get("/api/questions/sql_01_retention_cohort")
@@ -83,6 +83,13 @@ async def test_session_lifecycle_and_evaluation():
         report_resp = await ac.get(f"/api/session/{session_id}/report")
         assert report_resp.status_code == 200
         assert report_resp.json()["overall_score"] == eval_data["overall_score"]
+
+        # 6. Test switch question endpoint
+        switch_resp = await ac.post(f"/api/session/{session_id}/switch_question?category=SQL")
+        assert switch_resp.status_code == 200
+        switch_data = switch_resp.json()
+        assert switch_data["status"] == "success"
+        assert switch_data["new_question"]["category"] == "SQL"
 
 
 class MockWebSocket:

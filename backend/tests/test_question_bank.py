@@ -10,15 +10,15 @@ from app.services.question_bank import (
 
 def test_question_bank_counts():
     questions = get_all_questions()
-    assert len(questions) == 15
+    assert len(questions) == 21
 
     sql_q = get_questions_by_category(QuestionCategory.SQL)
     py_q = get_questions_by_category(QuestionCategory.PYTHON)
     sys_q = get_questions_by_category(QuestionCategory.ML_SYSTEM_DESIGN)
 
-    assert len(sql_q) == 5
-    assert len(py_q) == 5
-    assert len(sys_q) == 5
+    assert len(sql_q) == 7
+    assert len(py_q) == 7
+    assert len(sys_q) == 7
 
 
 def test_sql_questions_have_duckdb_seeds():

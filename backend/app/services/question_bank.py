@@ -569,6 +569,425 @@ test_attention()
             "Offline backtesting on historical counterfactuals without price elasticity bias",
         ],
     ),
+    # -------------------------------------------------------------------------
+    # ADDITIONAL SQL PROBLEMS (With Recursive CTE & Funnel Seeds)
+    # -------------------------------------------------------------------------
+    QuestionItem(
+        id="sql_06_hierarchical_org_rollup",
+        category=QuestionCategory.SQL,
+        title="Recursive Org Tree Rollup & Cumulative Budget Hierarchy",
+        prompt=(
+            "Using a Recursive Common Table Expression (WITH RECURSIVE), calculate the total headcount "
+            "and cumulative salary budget under every manager in the company hierarchy. "
+            "For each employee who is a manager, output: manager_id, direct_reports_count, "
+            "total_org_headcount, total_org_salary."
+        ),
+        difficulty="Senior",
+        verbal_introduction=(
+            "In this problem, we want to evaluate your ability to write recursive hierarchical queries in SQL. "
+            "You have an employees table where each person reports to a manager_id. "
+            "Your query must traverse parent-child relationships downward to compute cumulative headcounts and salary totals."
+        ),
+        starter_code="""-- Recursive organizational rollup query
+WITH RECURSIVE org_hierarchy AS (
+    -- Anchor member: every employee as the root of their subtree
+    SELECT
+        emp_id AS root_manager_id,
+        emp_id,
+        name,
+        salary,
+        manager_id,
+        0 AS depth
+    FROM employees
+    UNION ALL
+    -- Recursive member: child employees
+    SELECT
+        h.root_manager_id,
+        e.emp_id,
+        e.name,
+        e.salary,
+        e.manager_id,
+        h.depth + 1
+    FROM org_hierarchy h
+    JOIN employees e ON h.emp_id = e.manager_id
+)
+SELECT
+    root_manager_id AS manager_id,
+    COUNT(DISTINCT emp_id) - 1 AS total_org_headcount,
+    SUM(salary) AS total_org_salary
+FROM org_hierarchy
+GROUP BY root_manager_id
+HAVING COUNT(DISTINCT emp_id) > 1
+ORDER BY total_org_salary DESC;
+""",
+        seed_sql="""
+CREATE TABLE IF NOT EXISTS employees (
+    emp_id VARCHAR PRIMARY KEY,
+    name VARCHAR,
+    manager_id VARCHAR,
+    salary DOUBLE,
+    department VARCHAR
+);
+
+INSERT INTO employees VALUES
+    ('e1', 'Sarah (CEO)', NULL, 250000.0, 'Executive'),
+    ('e2', 'Michael (VP Eng)', 'e1', 180000.0, 'Engineering'),
+    ('e3', 'Lisa (VP Sales)', 'e1', 170000.0, 'Sales'),
+    ('e4', 'Alex (Director Eng)', 'e2', 140000.0, 'Engineering'),
+    ('e5', 'David (Staff ML)', 'e4', 130000.0, 'Engineering'),
+    ('e6', 'Emma (Senior ML)', 'e4', 115000.0, 'Engineering'),
+    ('e7', 'John (Account Exec)', 'e3', 95000.0, 'Sales');
+""",
+        rubric_criteria=[
+            "Correct formulation of anchor member and recursive member in WITH RECURSIVE",
+            "Accurate join condition matching children (manager_id = parent emp_id)",
+            "Handling cycle termination and depth tracking",
+            "Correct aggregation of cumulative organizational headcount and salary",
+        ],
+        clarifications={
+            "cycle": "Assume standard acyclic organizational hierarchy tree without circular manager references.",
+            "direct": "Direct reports count includes only immediate child nodes (depth = 1), whereas total org includes the full subtree.",
+        },
+        hints=[
+            "Start your anchor query with every employee acting as the root manager of their subtree.",
+            "In the recursive step, join the working table with employees on h.emp_id = e.manager_id.",
+            "Group by root_manager_id and filter out leaf employees who have no reports using HAVING COUNT(DISTINCT emp_id) > 1.",
+        ],
+    ),
+    QuestionItem(
+        id="sql_07_funnel_dropoff_attribution",
+        category=QuestionCategory.SQL,
+        title="Multi-Step Conversion Funnel & Drop-Off Velocity",
+        prompt=(
+            "Analyze a 4-step user checkout funnel: (1) view_item, (2) add_to_cart, (3) checkout_start, (4) purchase. "
+            "Write a query calculating: (a) number of users reaching each step, (b) drop-off percentage from the prior step, "
+            "and (c) average minutes elapsed from the first step to purchase for users who converted."
+        ),
+        difficulty="Senior",
+        verbal_introduction=(
+            "Funnel drop-off and conversion velocity are central to e-commerce and product data science. "
+            "We have a funnel_events table recording event timestamps. "
+            "You need to measure step completion counts, step-over-step drop-offs, and conversion velocities."
+        ),
+        starter_code="""-- Multi-step checkout funnel drop-off query
+WITH step_counts AS (
+    SELECT
+        step_name,
+        step_order,
+        COUNT(DISTINCT user_id) AS user_count
+    FROM funnel_events
+    GROUP BY step_name, step_order
+)
+SELECT
+    step_name,
+    user_count,
+    LAG(user_count) OVER (ORDER BY step_order) AS prev_step_count,
+    ROUND(100.0 * (1.0 - (user_count * 1.0 / NULLIF(LAG(user_count) OVER (ORDER BY step_order), 0))), 2) AS drop_off_pct
+FROM step_counts
+ORDER BY step_order;
+""",
+        seed_sql="""
+CREATE TABLE IF NOT EXISTS funnel_events (
+    event_id VARCHAR PRIMARY KEY,
+    user_id VARCHAR,
+    step_name VARCHAR,
+    step_order INT,
+    event_time TIMESTAMP
+);
+
+INSERT INTO funnel_events VALUES
+    ('ev1', 'u1', 'view_item', 1, '2024-03-01 10:00:00'),
+    ('ev2', 'u1', 'add_to_cart', 2, '2024-03-01 10:05:00'),
+    ('ev3', 'u1', 'checkout_start', 3, '2024-03-01 10:10:00'),
+    ('ev4', 'u1', 'purchase', 4, '2024-03-01 10:15:00'),
+    ('ev5', 'u2', 'view_item', 1, '2024-03-01 11:00:00'),
+    ('ev6', 'u2', 'add_to_cart', 2, '2024-03-01 11:10:00'),
+    ('ev7', 'u3', 'view_item', 1, '2024-03-01 12:00:00'),
+    ('ev8', 'u4', 'view_item', 1, '2024-03-01 13:00:00'),
+    ('ev9', 'u4', 'add_to_cart', 2, '2024-03-01 13:05:00'),
+    ('ev10', 'u4', 'checkout_start', 3, '2024-03-01 13:12:00'),
+    ('ev11', 'u4', 'purchase', 4, '2024-03-01 13:30:00');
+""",
+        rubric_criteria=[
+            "Correct step ordering filter ensuring chronological sequence per user",
+            "Accurate step count and LAG window function to compute drop-off percentage",
+            "Time difference calculation for end-to-end converted users",
+            "Handling users who drop off before final checkout gracefully without division errors",
+        ],
+        clarifications={
+            "order": "Users can only advance to step N if they completed step N-1 with an earlier timestamp.",
+            "repeat": "If a user visits a step multiple times, take their earliest occurrence in this session.",
+        },
+        hints=[
+            "First aggregate the user counts for each step_name and step_order.",
+            "Apply LAG(user_count) OVER (ORDER BY step_order) to compute the step-over-step drop-off percentage.",
+        ],
+    ),
+    # -------------------------------------------------------------------------
+    # ADDITIONAL PYTHON PROBLEMS
+    # -------------------------------------------------------------------------
+    QuestionItem(
+        id="py_06_bpe_tokenizer",
+        category=QuestionCategory.PYTHON,
+        title="Byte-Pair Encoding (BPE) Subword Tokenizer Merge Loop",
+        prompt=(
+            "Implement the core vocabulary learning loop for a Byte-Pair Encoding (BPE) subword tokenizer. "
+            "Given a dictionary of word frequencies where words are represented as lists of character symbols "
+            "ending with a special word-boundary token '</w>', iteratively find the most frequent adjacent pair of symbols "
+            "across the entire corpus, merge all occurrences of that pair, and repeat for `num_merges` iterations. "
+            "Return the list of learned merge pairs in order and the updated word symbol dictionary."
+        ),
+        difficulty="Senior",
+        verbal_introduction=(
+            "Subword tokenization like BPE is the foundation of modern Large Language Models such as GPT and LLaMA. "
+            "In this exercise, you will implement the core BPE merge algorithm from scratch. "
+            "Focus on clean frequency counting, efficient dictionary updates, and correct pair replacement."
+        ),
+        starter_code="""from collections import defaultdict
+
+def train_bpe(word_freqs: dict[str, int], num_merges: int) -> tuple[list[tuple[str, str]], dict[str, int]]:
+    \"\"\"
+    Train BPE merge rules on a vocabulary of space-separated symbol words.
+
+    Args:
+        word_freqs: Mapping of space-delimited symbol strings to counts,
+                    e.g. {'l o w </w>': 5, 'l o w e r </w>': 2, 'n e w e s t </w>': 6}
+        num_merges: Number of merge iterations to perform.
+
+    Returns:
+        (merges_list, updated_word_freqs)
+    \"\"\"
+    vocab = dict(word_freqs)
+    merges = []
+
+    for _ in range(num_merges):
+        # Count all adjacent pairs
+        pairs = defaultdict(int)
+        for word, freq in vocab.items():
+            symbols = word.split()
+            for i in range(len(symbols) - 1):
+                pairs[(symbols[i], symbols[i + 1])] += freq
+
+        if not pairs:
+            break
+
+        best_pair = max(pairs, key=pairs.get)
+        if pairs[best_pair] == 0:
+            break
+
+        merges.append(best_pair)
+
+        # Merge the best pair in vocabulary words
+        new_vocab = {}
+        target = " ".join(best_pair)
+        replacement = "".join(best_pair)
+        for word, freq in vocab.items():
+            new_word = word.replace(target, replacement)
+            new_vocab[new_word] = freq
+        vocab = new_vocab
+
+    return merges, vocab
+""",
+        unit_tests="""
+def test_bpe():
+    vocab = {
+        'l o w </w>': 5,
+        'l o w e r </w>': 2,
+        'n e w e s t </w>': 6,
+        'w i d e s t </w>': 3
+    }
+    merges, updated = train_bpe(vocab, 3)
+    assert len(merges) == 3, f"Expected 3 merges, got {len(merges)}"
+    assert ('e', 's') in merges, "Expected ('e', 's') merge rule"
+    print("All BPE unit tests passed successfully!")
+
+test_bpe()
+""",
+        rubric_criteria=[
+            "Correct adjacent pair frequency counting weighted by word frequency",
+            "Optimal argmax extraction of the highest frequency bigram",
+            "Accurate replacement of symbol pairs without accidental partial merges",
+            "Clean time complexity avoiding unneeded quadratic re-scans",
+        ],
+        clarifications={
+            "tie": "If two symbol pairs have identical frequency counts, you may break ties deterministically.",
+            "spaces": "Symbols within words are delimited by single spaces, and '</w>' denotes end-of-word boundary.",
+        },
+        hints=[
+            "Use a defaultdict(int) to accumulate pair frequencies: for word, freq in vocab.items(): symbols = word.split(); for i in range(len(symbols)-1): pairs[symbols[i], symbols[i+1]] += freq.",
+            "Pick best_pair = max(pairs, key=pairs.get). If pairs is empty or max count is 0, break early.",
+            "Reconstruct each word in vocab by replacing 's1 s2' with 's1s2'.",
+        ],
+    ),
+    QuestionItem(
+        id="py_07_multi_head_attention_numpy",
+        category=QuestionCategory.PYTHON,
+        title="Vectorized Scaled Dot-Product Multi-Head Attention in NumPy",
+        prompt=(
+            "Implement the Multi-Head Scaled Dot-Product Attention mechanism in pure NumPy (no PyTorch/TensorFlow). "
+            "Function signature: `multi_head_attention(Q, K, V, num_heads, causal_mask=False) -> np.ndarray`. "
+            "Assume inputs Q, K, V have shape `(batch_size, seq_len, d_model)`. "
+            "Split d_model into num_heads (where d_k = d_model // num_heads), compute scaled dot-product attention scores "
+            "Q @ K.T / sqrt(d_k), apply softmax along the last dimension, apply optional causal lower-triangular mask, "
+            "multiply by V, and concatenate heads back to `(batch_size, seq_len, d_model)`."
+        ),
+        difficulty="Senior",
+        verbal_introduction=(
+            "Multi-head self-attention is the central engine of the Transformer architecture. "
+            "In this challenge, you will implement vectorized multi-head attention in pure NumPy. "
+            "Pay close attention to tensor transpose shapes, numerical stability in softmax, and the causal autoregressive mask."
+        ),
+        starter_code="""import numpy as np
+
+def multi_head_attention(
+    Q: np.ndarray,
+    K: np.ndarray,
+    V: np.ndarray,
+    num_heads: int,
+    causal_mask: bool = False
+) -> np.ndarray:
+    \"\"\"
+    Computes Scaled Dot-Product Multi-Head Attention.
+
+    Q, K, V: shape (batch_size, seq_len, d_model)
+    Returns: shape (batch_size, seq_len, d_model)
+    \"\"\"
+    B, S, D = Q.shape
+    d_k = D // num_heads
+
+    # Reshape and transpose to (B, num_heads, S, d_k)
+    Q_h = Q.reshape(B, S, num_heads, d_k).transpose(0, 2, 1, 3)
+    K_h = K.reshape(B, S, num_heads, d_k).transpose(0, 2, 1, 3)
+    V_h = V.reshape(B, S, num_heads, d_k).transpose(0, 2, 1, 3)
+
+    # Scaled dot-product
+    scores = np.matmul(Q_h, K_h.transpose(0, 1, 3, 2)) / np.sqrt(d_k)
+
+    if causal_mask:
+        mask = np.triu(np.ones((S, S)), k=1).astype(bool)
+        scores[:, :, mask] = -1e9
+
+    # Numerically stable softmax
+    exp_scores = np.exp(scores - np.max(scores, axis=-1, keepdims=True))
+    attn_weights = exp_scores / np.sum(exp_scores, axis=-1, keepdims=True)
+
+    # Apply attention to values
+    context = np.matmul(attn_weights, V_h)
+
+    # Transpose and concatenate back to (B, S, D)
+    out = context.transpose(0, 2, 1, 3).reshape(B, S, D)
+    return out
+""",
+        unit_tests="""
+def test_mha():
+    np.random.seed(42)
+    B, S, D, H = 2, 4, 16, 4
+    Q = np.random.randn(B, S, D)
+    K = np.random.randn(B, S, D)
+    V = np.random.randn(B, S, D)
+
+    out = multi_head_attention(Q, K, V, num_heads=H, causal_mask=False)
+    assert out.shape == (B, S, D), f"Expected shape {(B, S, D)}, got {out.shape}"
+    assert not np.isnan(out).any(), "Output contains NaN values"
+
+    out_causal = multi_head_attention(Q, K, V, num_heads=H, causal_mask=True)
+    assert out_causal.shape == (B, S, D), "Causal output shape mismatch"
+    assert not np.isnan(out_causal).any(), "Causal output contains NaN values"
+    print("Multi-Head Attention tests passed successfully!")
+
+test_mha()
+""",
+        rubric_criteria=[
+            "Correct tensor reshaping and transposition: (batch, seq, heads, d_k) -> (batch, heads, seq, d_k)",
+            "Scaling by 1 / sqrt(d_k) to prevent vanishing gradients in softmax",
+            "Numerically stable softmax (subtracting max before exp)",
+            "Correct application of causal mask (-1e9 or -inf on upper triangle)",
+            "Clean concatenation back to (batch, seq, d_model)",
+        ],
+        clarifications={
+            "divisible": "You can assume d_model is evenly divisible by num_heads.",
+            "mask": "Causal mask ensures position i can only attend to positions j <= i.",
+        },
+        hints=[
+            "Reshape Q to (B, S, H, d_k), then transpose to (B, H, S, d_k). Do the same for K and V.",
+            "Compute scores = np.matmul(Q_trans, K_trans.transpose(0, 1, 3, 2)) / np.sqrt(d_k).",
+            "If causal_mask: mask = np.triu(np.ones((S, S)), k=1).astype(bool); scores[:, :, mask] = -1e9.",
+            "Apply softmax along axis=-1, matmul with V, transpose back to (B, S, H, d_k), and reshape to (B, S, D).",
+        ],
+    ),
+    # -------------------------------------------------------------------------
+    # ADDITIONAL ML SYSTEM DESIGN PROBLEMS
+    # -------------------------------------------------------------------------
+    QuestionItem(
+        id="sys_06_autonomous_driving_perception",
+        category=QuestionCategory.ML_SYSTEM_DESIGN,
+        title="Autonomous Vehicle Multi-Sensor 3D Perception & Trajectory Forecasting (30 FPS)",
+        prompt=(
+            "Design the real-time onboard perception and motion prediction system for an autonomous vehicle (L4 robotaxi). "
+            "The vehicle processes 8 high-resolution cameras (1080p @ 30 FPS) and 2 roof LiDARs (100k points/sec) "
+            "with an end-to-end inference budget under 35ms on dual automotive SOCs (e.g. NVIDIA DRIVE Orin). "
+            "Cover: (1) LiDAR point cloud voxelization, (2) Camera Bird's Eye View (BEV) temporal feature fusion, "
+            "(3) 3D bounding box detection and velocity estimation, (4) Multi-agent probabilistic trajectory forecasting, "
+            "and (5) Sensor occlusion fail-safes and out-of-distribution (OOD) uncertainty estimation."
+        ),
+        difficulty="Senior / Staff",
+        verbal_introduction=(
+            "Autonomous vehicle perception is one of the most demanding edge AI domains. "
+            "You have multi-modal camera streams and LiDAR point clouds operating under strict 35ms latency budgets. "
+            "Walk me through your multi-sensor fusion architecture, BEV representation, and how you estimate future trajectory distributions."
+        ),
+        rubric_criteria=[
+            "BEV temporal fusion representation (BEVFormer / Lift-Splat-Shoot) combining LiDAR depth and camera features",
+            "LiDAR point-cloud preprocessing (PointPillars / Sparse 3D Convolutions) optimized for TensorRT",
+            "Multi-task perception head: 3D bounding boxes, map segmentation, semantic lane graphs",
+            "Multi-modal trajectory prediction with GNNs/Transformers (Wayformer / MotionNet) modeling road topology",
+            "Safety-critical latency budgeting, ASIL-D fallback controllers, and runtime anomaly monitoring",
+        ],
+        clarifications={
+            "sensors": "Assume 8 cameras, 2 128-beam LiDARs, and IMU/GNSS odometry.",
+            "budget": "The onboard inference budget is strictly 35ms at 30Hz.",
+        },
+        hints=[
+            "Structure your design into 4 phases: Sensor Ingestion -> BEV Fusion Backbone -> Perception Heads -> Trajectory Forecasting.",
+            "Explain how camera perspective coordinates are projected to Bird's-Eye-View using learned depth distributions.",
+            "Quantify compute budgets: INT8 quantization, TensorRT kernels, and pipelining across multiple accelerator engines.",
+        ],
+    ),
+    QuestionItem(
+        id="sys_07_generative_code_completion",
+        category=QuestionCategory.ML_SYSTEM_DESIGN,
+        title="Ultra-Low Latency (<15ms) IDE Code Completion with Speculative Decoding",
+        prompt=(
+            "Design the cloud and edge architecture for an AI code completion engine (similar to GitHub Copilot / Cursor) "
+            "serving 500,000 active software engineers. "
+            "The system must suggest multi-line completions in under 15ms p95 latency while developers are actively typing. "
+            "Cover: (1) Cross-file repository context retrieval (Tree-sitter AST parsing + semantic chunking), "
+            "(2) Fill-in-the-Middle (FIM) training and prompt structuring, (3) Speculative decoding using small draft models "
+            "and continuous KV-cache prefix management, and (4) Client-side keystroke debouncing, cancellation tokens, and acceptance rate tracking."
+        ),
+        difficulty="Senior / Staff",
+        verbal_introduction=(
+            "Real-time code completion has extreme latency SLAs—anything over 20ms feels sluggish to a typing developer. "
+            "How would you architect a system that retrieves repository context, manages KV caches across keystrokes, "
+            "and uses speculative decoding to serve completions under 15ms?"
+        ),
+        rubric_criteria=[
+            "Fill-in-the-Middle (FIM) prompt formatting (Prefix, Suffix, Middle)",
+            "Speculative decoding architecture (fast 500M draft model validated by 7B target model)",
+            "KV-cache prefix tree management (Radix tree caching for shared repo prefixes)",
+            "Context retrieval using Tree-sitter AST symbols and locally indexed BM25/vector embeddings",
+            "Client-side event loops: keystroke VAD, cancellation tokens via gRPC/WebSocket, and acceptance metrics",
+        ],
+        clarifications={
+            "scale": "500k concurrent active typing sessions, global distribution.",
+            "sla": "p95 time-to-first-token under 15ms from the IDE.",
+        },
+        hints=[
+            "Divide the architecture into: IDE Extension -> Edge Routing -> KV-Cache/Context Engine -> Speculative Inference Cluster.",
+            "Explain why naive autoregressive token-by-token generation is too slow and how draft models or n-gram caching solve it.",
+            "Describe the Tree-sitter parsing layer to extract imported function signatures without shipping the entire repository on every keystroke.",
+        ],
+    ),
 ]
 
 
@@ -588,3 +1007,22 @@ def get_question_by_id(question_id: str) -> QuestionItem | None:
 def get_questions_by_category(category: QuestionCategory) -> list[QuestionItem]:
     """Filter questions by category."""
     return [q for q in QUESTIONS_BANK if q.category == category]
+
+
+def get_random_question(
+    category: QuestionCategory | None = None,
+    exclude_ids: list[str] | None = None,
+) -> QuestionItem | None:
+    """Select a randomized question from the bank with optional category filter and exclusions."""
+    import random
+
+    pool = QUESTIONS_BANK
+    if category:
+        pool = [q for q in pool if q.category == category]
+    if exclude_ids:
+        filtered = [q for q in pool if q.id not in exclude_ids]
+        if filtered:
+            pool = filtered
+    return (
+        random.choice(pool) if pool else (random.choice(QUESTIONS_BANK) if QUESTIONS_BANK else None)
+    )

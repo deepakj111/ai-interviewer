@@ -20,6 +20,7 @@ import {
   Lightbulb,
   Radio,
   UserCheck,
+  Shuffle,
 } from "lucide-react";
 import InterviewerAvatar from "@/components/InterviewerAvatar";
 import CandidateWebcam from "@/components/CandidateWebcam";
@@ -423,6 +424,34 @@ export default function InterviewRoomPage() {
     }
   };
 
+  const [isSwitchingQuestion, setIsSwitchingQuestion] = useState(false);
+
+  const handleSwitchQuestion = async () => {
+    if (isSwitchingQuestion) return;
+    setIsSwitchingQuestion(true);
+    try {
+      const res = await fetch(`http://localhost:8000/api/session/${sessionId}/switch_question`, {
+        method: "POST",
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setActiveQuestion(data.new_question);
+        if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+          socketRef.current.send(
+            JSON.stringify({
+              type: "text_turn",
+              text: `I'd like to work on '${data.new_question.title}'. Can you explain the problem and requirements?`,
+            })
+          );
+        }
+      }
+    } catch (err) {
+      console.error("Could not switch question:", err);
+    } finally {
+      setIsSwitchingQuestion(false);
+    }
+  };
+
   const handleEndInterview = () => {
     voiceManager.cancel();
     router.push(`/report/${sessionId}`);
@@ -730,6 +759,20 @@ export default function InterviewRoomPage() {
                 }`}
               >
                 <FileQuestion className="w-3.5 h-3.5" /> Full Problem Details
+              </button>
+            </div>
+
+            {/* Next Problem / Question Bank Switcher */}
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleSwitchQuestion}
+                disabled={isSwitchingQuestion}
+                className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-medium flex items-center gap-1.5 transition-colors border border-slate-700/60"
+                title="Switch to another problem from the 21-question bank"
+              >
+                <Shuffle className={`w-3.5 h-3.5 text-blue-400 ${isSwitchingQuestion ? "animate-spin" : ""}`} />
+                <span>{isSwitchingQuestion ? "Switching..." : "Next Problem"}</span>
               </button>
             </div>
           </div>

@@ -31,8 +31,25 @@ export default function OnboardingPage() {
   const [interviewMode, setInterviewMode] = useState("SQL_PYTHON_CODING");
   const [jobDescription, setJobDescription] = useState("");
   const [resumeFile, setResumeFile] = useState<File | null>(null);
+  const [availableQuestions, setAvailableQuestions] = useState<any[]>([]);
+  const [selectedQuestionId, setSelectedQuestionId] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  React.useEffect(() => {
+    async function loadQuestions() {
+      try {
+        const res = await fetch("http://localhost:8000/api/questions");
+        if (res.ok) {
+          const qs = await res.json();
+          setAvailableQuestions(qs);
+        }
+      } catch (e) {
+        console.warn("Could not load questions catalog:", e);
+      }
+    }
+    loadQuestions();
+  }, []);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
@@ -76,6 +93,9 @@ export default function OnboardingPage() {
       }
       if (apiKey.trim()) {
         formData.append("api_key", apiKey.trim());
+      }
+      if (selectedQuestionId.trim()) {
+        formData.append("question_id", selectedQuestionId.trim());
       }
 
       const res = await fetch("http://localhost:8000/api/session/init", {
@@ -350,7 +370,62 @@ export default function OnboardingPage() {
             </div>
           </div>
 
-          {/* Section 5: Interviewer Persona & Voice Selector */}
+          {/* Section 5: Question Variety & Focus Selector */}
+          <div className="p-6 rounded-2xl glass-panel border border-slate-800 bg-slate-900/60">
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
+                <Code className="w-4 h-4 text-blue-400" /> Practice Question Focus & Variety
+              </label>
+              <span className="text-[11px] text-emerald-400 font-semibold">
+                21 Curated Problems in Bank
+              </span>
+            </div>
+            <p className="text-xs text-slate-400 mb-3">
+              Practice over multiple weeks with fresh technical scenarios. Select an exact problem or let the AI Bar-Raiser dynamically randomize for you.
+            </p>
+            <select
+              value={selectedQuestionId}
+              onChange={(e) => setSelectedQuestionId(e.target.value)}
+              className="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-slate-200 focus:outline-none focus:border-blue-500 cursor-pointer"
+            >
+              <option value="">🌟 Randomized / Adaptive (Mix of Fresh Questions - Recommended)</option>
+              {availableQuestions.filter((q) => q.category === "SQL").length > 0 && (
+                <optgroup label="── SQL Live Coding (DuckDB WASM) ──">
+                  {availableQuestions
+                    .filter((q) => q.category === "SQL")
+                    .map((q) => (
+                      <option key={q.id} value={q.id}>
+                        SQL: {q.title}
+                      </option>
+                    ))}
+                </optgroup>
+              )}
+              {availableQuestions.filter((q) => q.category === "PYTHON").length > 0 && (
+                <optgroup label="── Python Algorithms (Pyodide WASM) ──">
+                  {availableQuestions
+                    .filter((q) => q.category === "PYTHON")
+                    .map((q) => (
+                      <option key={q.id} value={q.id}>
+                        Python: {q.title}
+                      </option>
+                    ))}
+                </optgroup>
+              )}
+              {availableQuestions.filter((q) => q.category === "ML_SYSTEM_DESIGN").length > 0 && (
+                <optgroup label="── ML System Design Architecture ──">
+                  {availableQuestions
+                    .filter((q) => q.category === "ML_SYSTEM_DESIGN")
+                    .map((q) => (
+                      <option key={q.id} value={q.id}>
+                        System Design: {q.title}
+                      </option>
+                    ))}
+                </optgroup>
+              )}
+            </select>
+          </div>
+
+          {/* Section 6: Interviewer Persona & Voice Selector */}
           <div className="space-y-3">
             <div className="flex items-center justify-between pl-1">
               <label className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">

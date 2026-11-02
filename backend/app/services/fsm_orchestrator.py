@@ -1,7 +1,13 @@
 """Deterministic Finite State Machine (FSM) and Rolling Context Compaction."""
 
-from app.schemas import FSMStateSnapshot, InterviewMode, InterviewStage, QuestionItem
-from app.services.question_bank import get_question_by_id
+from app.schemas import (
+    FSMStateSnapshot,
+    InterviewMode,
+    InterviewStage,
+    QuestionCategory,
+    QuestionItem,
+)
+from app.services.question_bank import get_all_questions, get_question_by_id
 
 STAGE_BUDGETS_SECONDS: dict[InterviewStage, int] = {
     InterviewStage.INTRO: 120,  # 2 minutes
@@ -100,20 +106,40 @@ class InterviewFSM:
         self.stage_start_elapsed = 0
         new_stage = self.current_stage
 
-        # Assign relevant question if entering coding or system design
+        # Assign relevant question if entering coding or system design dynamically
         if new_stage == InterviewStage.LIVE_CODING_SQL_PYTHON:
             active_q = (
                 get_question_by_id(self.active_question_id) if self.active_question_id else None
             )
-            if not active_q or active_q.category not in ["SQL", "PYTHON"]:
-                self.active_question_id = "sql_01_retention_cohort"
+            valid_cats = ["SQL", "PYTHON", QuestionCategory.SQL, QuestionCategory.PYTHON]
+            if not active_q or active_q.category not in valid_cats:
+                import random
+
+                coding_questions = [
+                    q
+                    for q in get_all_questions()
+                    if q.category in [QuestionCategory.SQL, QuestionCategory.PYTHON]
+                ]
+                if coding_questions:
+                    chosen = random.choice(coding_questions)
+                    self.active_question_id = chosen.id
 
         elif new_stage == InterviewStage.ML_SYSTEM_DESIGN:
             active_q = (
                 get_question_by_id(self.active_question_id) if self.active_question_id else None
             )
-            if not active_q or active_q.category != "ML_SYSTEM_DESIGN":
-                self.active_question_id = "sys_01_realtime_fraud"
+            valid_cats = ["ML_SYSTEM_DESIGN", QuestionCategory.ML_SYSTEM_DESIGN]
+            if not active_q or active_q.category not in valid_cats:
+                import random
+
+                sys_questions = [
+                    q
+                    for q in get_all_questions()
+                    if q.category == QuestionCategory.ML_SYSTEM_DESIGN
+                ]
+                if sys_questions:
+                    chosen = random.choice(sys_questions)
+                    self.active_question_id = chosen.id
 
         active_q = get_question_by_id(self.active_question_id) if self.active_question_id else None
 

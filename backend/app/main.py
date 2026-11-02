@@ -96,6 +96,7 @@ async def init_session(
     interview_mode: InterviewMode = Form(InterviewMode.FULL_LOOP),
     job_description: str | None = Form(None),
     api_key: str | None = Form(None),
+    question_id: str | None = Form(None),
     db: AsyncSession = Depends(get_db),
 ):
     """Initialize a new interview session and extract CandidateClaimGraph from PDF resume."""
@@ -115,7 +116,7 @@ async def init_session(
         api_key=api_key,
     )
 
-    fsm = InterviewFSM(mode=interview_mode)
+    fsm = InterviewFSM(mode=interview_mode, active_question_id=question_id)
 
     session_record = InterviewSessionModel(
         id=session_id,
@@ -228,6 +229,66 @@ async def advance_stage(
         "previous_stage": session.fsm_state,
         "new_stage": new_stage.value,
         "announcement": announcement,
+    }
+
+
+@app.post("/api/session/{session_id}/switch_question")
+async def switch_question(
+    session_id: str,
+    question_id: str | None = Query(None),
+    category: str | None = Query(None),
+    db: AsyncSession = Depends(get_db),
+):
+    """Switch active question for the session to a specific ID or next randomized question from bank."""
+    session = await db.get(InterviewSessionModel, session_id)
+    if not session:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+
+    new_q = None
+    if question_id:
+        new_q = get_question_by_id(question_id)
+    else:
+        # Determine appropriate category based on current stage or query
+        cat_enum = None
+        if category:
+            try:
+                cat_enum = QuestionCategory(category)
+            except ValueError:
+                pass
+        if not cat_enum:
+            curr_q = (
+                get_question_by_id(session.active_question_id)
+                if session.active_question_id
+                else None
+            )
+            if curr_q:
+                cat_enum = curr_q.category
+            elif session.fsm_state == "ML_SYSTEM_DESIGN":
+                cat_enum = QuestionCategory.ML_SYSTEM_DESIGN
+            else:
+                cat_enum = QuestionCategory.SQL
+
+        available = [
+            q for q in get_questions_by_category(cat_enum) if q.id != session.active_question_id
+        ]
+        if available:
+            import random
+
+            new_q = random.choice(available)
+        else:
+            new_q = get_question_by_id(session.active_question_id)
+
+    if not new_q:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="No suitable question found"
+        )
+
+    session.active_question_id = new_q.id
+    await db.commit()
+
+    return {
+        "status": "success",
+        "new_question": new_q,
     }
 
 
