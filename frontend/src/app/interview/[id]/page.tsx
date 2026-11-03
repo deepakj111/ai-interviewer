@@ -26,7 +26,10 @@ import {
   Lightbulb,
   Headphones,
   Mic,
+  MicOff,
   X,
+  Sliders,
+  CheckCircle2,
 } from "lucide-react";
 import InterviewerAvatar from "@/components/InterviewerAvatar";
 import CandidateWebcam from "@/components/CandidateWebcam";
@@ -34,6 +37,7 @@ import CodeSandbox from "@/components/CodeSandbox";
 import SystemDesignCanvas from "@/components/SystemDesignCanvas";
 import { AudioPlayerQueue, AudioRecorder } from "@/lib/audioStream";
 import { INTERVIEWER_PERSONAS, InterviewerPersona, voiceManager } from "@/lib/voiceManager";
+import { getApiUrl, getWsUrl } from "@/lib/api";
 
 function getStagesPipeline(interviewMode?: string) {
   switch (interviewMode) {
@@ -94,7 +98,7 @@ export default function InterviewRoomPage() {
   const [sessionData, setSessionData] = useState<any>(null);
   const [activeQuestion, setActiveQuestion] = useState<any>(null);
   const [fsmSnapshot, setFsmSnapshot] = useState<any>(null);
-  const [transcripts, setTranscripts] = useState<Array<{ speaker: string; text: string }>>([]);
+  const [transcripts, setTranscripts] = useState<Array<{ speaker: string; text: string; time?: string }>>([]);
   const [latestCaption, setLatestCaption] = useState<string>("");
   const [candidateInputText, setCandidateInputText] = useState("");
 
@@ -116,40 +120,25 @@ export default function InterviewRoomPage() {
   const [isMicMuted, setIsMicMuted] = useState(false);
   const [isTtsEnabled, setIsTtsEnabled] = useState(true);
   const [isCandidateWorking, setIsCandidateWorking] = useState(false);
-  const [isHeadsetMode, setIsHeadsetMode] = useState<boolean>(true);
-  const [detectedAudioDevice, setDetectedAudioDevice] = useState<string>("Headset Active");
+  const [isInterviewerThinking, setIsInterviewerThinking] = useState(false);
 
-  // Live Speech Recognition & Turn Dispatching State
+  // 2026 Turn-Taking Voice Control Modes
+  // 'handsfree' = automatic VAD with 3.5s thinking pause
+  // 'push_to_talk' = hold spacebar or mic button to talk, release to send
+  const [voiceInputMode, setVoiceInputMode] = useState<"handsfree" | "push_to_talk">("handsfree");
+  const [isPushToTalkActive, setIsPushToTalkActive] = useState(false);
+  const [pauseCountdown, setPauseCountdown] = useState<number | null>(null);
+
+  // Speech Recognition & Turn Dispatching State
   const [liveSpeechPreview, setLiveSpeechPreview] = useState<string>("");
   const [isLiveListening, setIsLiveListening] = useState<boolean>(false);
   const speechBufferRef = useRef<string>("");
   const speechSendTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const countdownIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const isMicMutedRef = useRef(false);
   const isMountedRef = useRef(true);
   const interviewerSpokeStartTimeRef = useRef<number>(0);
-  const interviewerSpokenTextRef = useRef<string>("");
   const thinkingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-
-  // Auto-detect Bluetooth/Headset audio input devices
-  useEffect(() => {
-    async function checkDevices() {
-      if (typeof navigator === "undefined" || !navigator.mediaDevices?.enumerateDevices) return;
-      try {
-        const devices = await navigator.mediaDevices.enumerateDevices();
-        const inputs = devices.filter((d) => d.kind === "audioinput");
-        const found = inputs.find((d) =>
-          /headset|bluetooth|airpods|headphones|earphones|buds|wh-|wf-|galaxy/i.test(d.label)
-        );
-        if (found) {
-          setIsHeadsetMode(true);
-          setDetectedAudioDevice(found.label.slice(0, 20));
-        }
-      } catch (err) {
-        console.warn("Audio device enumeration skipped:", err);
-      }
-    }
-    checkDevices();
-  }, []);
 
   const socketRef = useRef<WebSocket | null>(null);
   const audioRecorderRef = useRef<AudioRecorder | null>(null);
@@ -162,13 +151,13 @@ export default function InterviewRoomPage() {
   // Auto-scroll transcript feed
   useEffect(() => {
     transcriptEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [transcripts]);
+  }, [transcripts, isInterviewerThinking]);
 
-  // Load session details and establish persistent session start time
+  // Load session details from API
   useEffect(() => {
     async function fetchSession() {
       try {
-        const res = await fetch(`http://localhost:8000/api/session/${sessionId}`);
+        const res = await fetch(getApiUrl(`/api/session/${sessionId}`));
         if (res.ok) {
           const data = await res.json();
           setSessionData(data);
@@ -176,7 +165,6 @@ export default function InterviewRoomPage() {
             setActiveQuestion(data.active_question);
           }
 
-          // Initialize persistent start time from session creation
           const storageKey = `session_start_${sessionId}`;
           let startMs = 0;
           if (typeof window !== "undefined") {
@@ -224,58 +212,51 @@ export default function InterviewRoomPage() {
     return () => clearInterval(interval);
   }, [sessionId, sessionData]);
 
-  // Proactive Human-Like Silence Monitor: Sends periodic silence_ping to WebSocket
+  // Proactive Human-Like Silence Monitor
   useEffect(() => {
-    let lastPingStage = 0; // 0: none, 1: 30s, 2: 65s, 3: 105s
+    let lastPingStage = 0;
 
     const silenceCheck = setInterval(() => {
       const idleSec = Math.floor((Date.now() - lastCandidateActivityRef.current) / 1000);
 
-      // Clear stale uncommitted speech buffer if idle for over 15 seconds
-      if (idleSec >= 15 && speechBufferRef.current.length > 0) {
+      if (idleSec >= 20 && speechBufferRef.current.length > 0) {
         speechBufferRef.current = "";
         setLiveSpeechPreview("");
       }
 
-      // Don't ping if interviewer is speaking, candidate is coding/drawing, or candidate has active speech buffer
-      if (isSpeakingRef.current || isCandidateWorking || speechBufferRef.current.length > 0) {
+      if (isSpeakingRef.current || isCandidateWorking || speechBufferRef.current.length > 0 || isPushToTalkActive) {
         lastPingStage = 0;
         return;
       }
 
-      // Level 1: 30s of silence -> warm check-in
-      if (idleSec >= 30 && idleSec < 65 && lastPingStage < 1) {
+      // 35s of quiet
+      if (idleSec >= 35 && idleSec < 75 && lastPingStage < 1) {
         lastPingStage = 1;
-        setSilencePrompt("Feel free to think out loud, ask clarifying questions, or request a hint.");
+        setSilencePrompt("Take your time. Feel free to think out loud or ask for constraints.");
         if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
           setIsInterviewerThinking(true);
-          socketRef.current.send(JSON.stringify({ type: "silence_ping", seconds_silent: 30 }));
+          socketRef.current.send(JSON.stringify({ type: "silence_ping", seconds_silent: 35 }));
         }
-      }
-      // Level 2: 65s of silence -> proactive assistance
-      else if (idleSec >= 65 && idleSec < 105 && lastPingStage < 2) {
+      } else if (idleSec >= 75 && idleSec < 120 && lastPingStage < 2) {
         lastPingStage = 2;
-        setSilencePrompt("Need a hint or want to discuss possible approaches? Click 'Get Hint' or just ask!");
+        setSilencePrompt("Need a hint or want to discuss trade-offs? Click 'Get Hint' or ask directly.");
         if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
           setIsInterviewerThinking(true);
-          socketRef.current.send(JSON.stringify({ type: "silence_ping", seconds_silent: 65 }));
+          socketRef.current.send(JSON.stringify({ type: "silence_ping", seconds_silent: 75 }));
         }
-      }
-      // Level 3: 105s of silence -> unblock candidate
-      else if (idleSec >= 105 && lastPingStage < 3) {
+      } else if (idleSec >= 120 && lastPingStage < 3) {
         lastPingStage = 3;
-        setSilencePrompt("Would you like a hint to get unstuck, or should we break down the requirements together?");
+        setSilencePrompt("Would you like to review the starter requirements together?");
         if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
           setIsInterviewerThinking(true);
-          socketRef.current.send(JSON.stringify({ type: "silence_ping", seconds_silent: 105 }));
+          socketRef.current.send(JSON.stringify({ type: "silence_ping", seconds_silent: 120 }));
         }
       }
-    }, 3000);
+    }, 4000);
 
     return () => clearInterval(silenceCheck);
-  }, [isCandidateWorking]);
+  }, [isCandidateWorking, isPushToTalkActive]);
 
-  // Format mm:ss
   const formatTime = (secs: number) => {
     const m = Math.floor(secs / 60);
     const s = secs % 60;
@@ -306,7 +287,6 @@ export default function InterviewRoomPage() {
       const text = rawText.trim();
       if (!text) return;
 
-      // Cut in / interrupt interviewer if they are currently speaking
       if (isSpeakingRef.current) {
         handleInterrupt();
       }
@@ -315,12 +295,17 @@ export default function InterviewRoomPage() {
       setSilencePrompt(null);
       setLiveSpeechPreview("");
       speechBufferRef.current = "";
+      setPauseCountdown(null);
+
       if (speechSendTimeoutRef.current) {
         clearTimeout(speechSendTimeoutRef.current);
         speechSendTimeoutRef.current = null;
       }
+      if (countdownIntervalRef.current) {
+        clearInterval(countdownIntervalRef.current);
+        countdownIntervalRef.current = null;
+      }
 
-      // Reset speech recognition session so results don't compound into future turns
       if (speechRecRef.current) {
         try {
           speechRecRef.current.abort();
@@ -332,7 +317,6 @@ export default function InterviewRoomPage() {
         if (thinkingTimeoutRef.current) {
           clearTimeout(thinkingTimeoutRef.current);
         }
-        // Safety watchdog: never leave candidate in 'thinking' state for > 12s
         thinkingTimeoutRef.current = setTimeout(() => {
           setIsInterviewerThinking(false);
         }, 12000);
@@ -343,36 +327,67 @@ export default function InterviewRoomPage() {
             text: text,
           })
         );
-        setTranscripts((prev) => [...prev, { speaker: "candidate", text: text }]);
+        const timeStr = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+        setTranscripts((prev) => [...prev, { speaker: "candidate", text: text, time: timeStr }]);
       }
     },
     [handleInterrupt]
   );
 
-  // Global shortcut: press Spacebar (outside input/code fields) to cut in/interrupt speech
+  // Push-to-Talk and Spacebar Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      const isInput =
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.isContentEditable ||
+          target.closest(".monaco-editor"));
+
+      if (isInput) return;
+
+      // Spacebar to cut-in if speaking
       if (e.code === "Space" && isSpeakingRef.current) {
-        const target = e.target as HTMLElement;
-        if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable || target.closest(".monaco-editor"))) {
-          return;
-        }
         e.preventDefault();
         handleInterrupt();
+        return;
+      }
+
+      // Spacebar for push-to-talk mode
+      if (e.code === "Space" && voiceInputMode === "push_to_talk" && !isPushToTalkActive) {
+        e.preventDefault();
+        setIsPushToTalkActive(true);
+        setIsMicMuted(false);
       }
     };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [handleInterrupt]);
 
-  // Deterministic Persona-Locked Speech Synthesis with Echo-Loop Safeguard
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.code === "Space" && voiceInputMode === "push_to_talk" && isPushToTalkActive) {
+        e.preventDefault();
+        setIsPushToTalkActive(false);
+        // Flush speech buffer immediately on release
+        if (speechBufferRef.current.trim().length > 0) {
+          dispatchCandidateTurn(speechBufferRef.current.trim());
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("keyup", handleKeyUp);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("keyup", handleKeyUp);
+    };
+  }, [handleInterrupt, voiceInputMode, isPushToTalkActive, dispatchCandidateTurn]);
+
+  // Speech Synthesis with Persona-Locked Voice
   const speakInterviewerCaption = useCallback(
     (text: string) => {
       if (!isTtsEnabled) return;
-      if (hasLiveAudioRef.current) return; // Use Gemini Live PCM stream if actively delivering audio
+      if (hasLiveAudioRef.current) return;
 
       interviewerSpokeStartTimeRef.current = Date.now();
-      interviewerSpokenTextRef.current = text.toLowerCase();
       isSpeakingRef.current = true;
       setIsSpeaking(true);
 
@@ -409,7 +424,7 @@ export default function InterviewRoomPage() {
     isSpeakingRef.current = true;
     setIsSpeaking(true);
     voiceManager.speak(
-      `Hello, I am ${selectedPersona.name}. I am ready to begin your technical interview for ${sessionData?.target_role || "Senior ML Engineer"}.`,
+      `Hello! I am ${selectedPersona.name}. I'm excited to collaborate with you on today's technical problems.`,
       {
         onStart: () => {
           isSpeakingRef.current = true;
@@ -427,12 +442,8 @@ export default function InterviewRoomPage() {
     );
   };
 
-  // Interviewer Thinking state
-  const [isInterviewerThinking, setIsInterviewerThinking] = useState(false);
-
   const stagesPipeline = getStagesPipeline(sessionData?.interview_mode);
 
-  // Sync mic mute state and mount state to refs
   useEffect(() => {
     isMicMutedRef.current = isMicMuted;
   }, [isMicMuted]);
@@ -444,7 +455,7 @@ export default function InterviewRoomPage() {
     };
   }, []);
 
-  // Browser SpeechRecognition for Candidate Microphone with Auto-Restart & Live Turn Debouncing
+  // Web SpeechRecognition with Generous 3.5s Thinking Pause and PTT support
   useEffect(() => {
     if (typeof window === "undefined") return;
     const SpeechRecognition =
@@ -455,7 +466,7 @@ export default function InterviewRoomPage() {
       return;
     }
 
-    if (isMicMuted) {
+    if (isMicMuted && !(voiceInputMode === "push_to_talk" && isPushToTalkActive)) {
       if (speechRecRef.current) {
         try {
           speechRecRef.current.stop();
@@ -485,43 +496,38 @@ export default function InterviewRoomPage() {
         recognition.onspeechstart = () => {
           lastCandidateActivityRef.current = Date.now();
           setSilencePrompt(null);
+          setPauseCountdown(null);
+          if (speechSendTimeoutRef.current) {
+            clearTimeout(speechSendTimeoutRef.current);
+            speechSendTimeoutRef.current = null;
+          }
+          if (countdownIntervalRef.current) {
+            clearInterval(countdownIntervalRef.current);
+            countdownIntervalRef.current = null;
+          }
         };
 
         recognition.onresult = (event: any) => {
-          // 1. Acoustic Self-Interruption Protection: When interviewer is speaking
+          // If interviewer is speaking and candidate speaks substantively, cut in immediately!
           if (isSpeakingRef.current) {
-            const elapsedSpeakingMs = Date.now() - (interviewerSpokeStartTimeRef.current || 0);
-
-            // Read the newly detected words
             let bargeText = "";
             for (let i = event.resultIndex; i < event.results.length; i++) {
               bargeText += event.results[i][0].transcript + " ";
             }
-            const cleanBarge = bargeText.trim();
-            const words = cleanBarge.split(/\s+/).filter(Boolean);
-
-            // Allow hands-free voice barge-in ONLY IF:
-            // User has headset active, interviewer has been speaking for > 2.5s (grace period),
-            // and user spoke at least 3 substantial words (>= 12 chars).
-            // Spacebar and on-screen button are always available for instant zero-latency barge-in.
-            const canBargeIn = isHeadsetMode && elapsedSpeakingMs > 2500 && cleanBarge.length >= 12 && words.length >= 3;
-            if (canBargeIn) {
+            if (bargeText.trim().length > 3) {
               handleInterrupt();
-            } else {
-              // Completely drop microphone pickup while interviewer is speaking to avoid echo loops
-              return;
             }
+            return;
           }
 
-          // 2. Echo Cooldown: Ignore microphone pickup for 1000ms after interviewer stops speaking
-          if (Date.now() - lastSpokeTimestampRef.current < 1000) {
+          // Ignore acoustic echo right after interviewer stops
+          if (Date.now() - lastSpokeTimestampRef.current < 600) {
             return;
           }
 
           lastCandidateActivityRef.current = Date.now();
           setSilencePrompt(null);
 
-          // 3. Aggregate transcript segments from current active recognition session
           let fullTranscript = "";
           for (let i = 0; i < event.results.length; i++) {
             fullTranscript += event.results[i][0].transcript + " ";
@@ -532,23 +538,44 @@ export default function InterviewRoomPage() {
             speechBufferRef.current = cleanTranscript;
             setLiveSpeechPreview(cleanTranscript);
 
-            // Debounced send: After 1400ms of no new speech, automatically dispatch candidate turn
+            // In Push-to-Talk mode, do not auto-send until user releases key/button
+            if (voiceInputMode === "push_to_talk") {
+              return;
+            }
+
+            // In Hands-free mode, give candidate a generous 3.5s pause to think and speak
             if (speechSendTimeoutRef.current) {
               clearTimeout(speechSendTimeoutRef.current);
             }
+            if (countdownIntervalRef.current) {
+              clearInterval(countdownIntervalRef.current);
+            }
+
+            let remainingSec = 3.5;
+            setPauseCountdown(remainingSec);
+
+            countdownIntervalRef.current = setInterval(() => {
+              remainingSec = Math.max(0, Math.round((remainingSec - 0.5) * 10) / 10);
+              setPauseCountdown(remainingSec);
+              if (remainingSec <= 0 && countdownIntervalRef.current) {
+                clearInterval(countdownIntervalRef.current);
+                countdownIntervalRef.current = null;
+              }
+            }, 500);
+
             speechSendTimeoutRef.current = setTimeout(() => {
               if (speechBufferRef.current.trim().length > 0) {
                 dispatchCandidateTurn(speechBufferRef.current.trim());
               }
-            }, 1400);
+            }, 3500);
           }
         };
 
         recognition.onerror = (e: any) => {
           if (e.error !== "no-speech") {
-            console.warn("Speech recognition status:", e.error);
+            console.warn("Speech recognition notice:", e.error);
           }
-          if (e.error === "not-allowed" || e.error === "service-not-allowed") {
+          if (e.error === "not-allowed") {
             setIsMicMuted(true);
             setIsLiveListening(false);
           }
@@ -557,16 +584,16 @@ export default function InterviewRoomPage() {
         recognition.onend = () => {
           if (isEffectActive) setIsLiveListening(false);
 
-          // Flush any buffered speech that wasn't dispatched yet
-          if (speechBufferRef.current.trim().length > 0) {
-            if (speechSendTimeoutRef.current) {
-              clearTimeout(speechSendTimeoutRef.current);
-              speechSendTimeoutRef.current = null;
-            }
+          // In hands-free mode, if buffer exists and no timeout running, send
+          if (
+            voiceInputMode === "handsfree" &&
+            speechBufferRef.current.trim().length > 0 &&
+            !speechSendTimeoutRef.current
+          ) {
             dispatchCandidateTurn(speechBufferRef.current.trim());
           }
 
-          // Auto-restart recognition so mic never dies during the interview!
+          // Keep microphone connection alive seamlessly
           if (isEffectActive && isMountedRef.current && !isMicMutedRef.current) {
             setTimeout(() => {
               if (isEffectActive && isMountedRef.current && !isMicMutedRef.current) {
@@ -579,7 +606,6 @@ export default function InterviewRoomPage() {
         recognition.start();
         speechRecRef.current = recognition;
       } catch (err) {
-        console.warn("Speech recognition start attempt failed, will retry:", err);
         if (isEffectActive && isMountedRef.current && !isMicMutedRef.current) {
           setTimeout(startRecognition, 1000);
         }
@@ -594,6 +620,10 @@ export default function InterviewRoomPage() {
         clearTimeout(speechSendTimeoutRef.current);
         speechSendTimeoutRef.current = null;
       }
+      if (countdownIntervalRef.current) {
+        clearInterval(countdownIntervalRef.current);
+        countdownIntervalRef.current = null;
+      }
       if (speechRecRef.current) {
         try {
           speechRecRef.current.stop();
@@ -601,21 +631,20 @@ export default function InterviewRoomPage() {
       }
       setIsLiveListening(false);
     };
-  }, [isMicMuted, handleInterrupt, isHeadsetMode, dispatchCandidateTurn]);
+  }, [isMicMuted, handleInterrupt, dispatchCandidateTurn, voiceInputMode, isPushToTalkActive]);
 
   // Establish WebSocket connection and Audio streaming
   useEffect(() => {
     if (!sessionId) return;
 
     const apiKey = typeof window !== "undefined" ? sessionStorage.getItem("ai_interviewer_api_key") || "" : "";
-    const wsUrl = `ws://localhost:8000/ws/interview/${sessionId}${apiKey ? `?api_key=${apiKey}` : ""}`;
+    const wsUrl = getWsUrl(`/ws/interview/${sessionId}${apiKey ? `?api_key=${apiKey}` : ""}`);
     const ws = new WebSocket(wsUrl);
     socketRef.current = ws;
 
     const audioPlayer = new AudioPlayerQueue(24000);
     audioPlayerRef.current = audioPlayer;
 
-    // Visualizer loop reading frequency from AudioPlayerQueue
     const updateFrequency = () => {
       if (audioPlayerRef.current && hasLiveAudioRef.current) {
         const freq = audioPlayerRef.current.getFrequencyData();
@@ -630,21 +659,18 @@ export default function InterviewRoomPage() {
     };
     animFrameRef.current = requestAnimationFrame(updateFrequency);
 
-    // Audio Recorder (16kHz PCM capture for Gemini Live)
     const audioRecorder = new AudioRecorder((base64Pcm) => {
       if (!isMicMuted && ws.readyState === WebSocket.OPEN) {
-        // Only stream live mic PCM if interviewer is not speaking (or candidate is barging in)
         ws.send(JSON.stringify({ type: "audio", data: base64Pcm }));
       }
     }, 16000);
     audioRecorderRef.current = audioRecorder;
 
     ws.onopen = async () => {
-      console.log("WebSocket connected to interview multiplexer");
       try {
         await audioRecorder.start();
       } catch (e) {
-        console.warn("Microphone access pending or denied:", e);
+        console.warn("Microphone access pending:", e);
       }
     };
 
@@ -656,7 +682,6 @@ export default function InterviewRoomPage() {
           if (msg.data.active_question) {
             setActiveQuestion(msg.data.active_question);
           }
-          // Focus appropriate workbench tab when stage advances
           if (msg.data.current_stage === "LIVE_CODING_SQL_PYTHON") {
             setActiveTab("code");
           } else if (msg.data.current_stage === "ML_SYSTEM_DESIGN") {
@@ -671,12 +696,12 @@ export default function InterviewRoomPage() {
           }
           setIsInterviewerThinking(false);
           setLatestCaption(msg.text);
-          setTranscripts((prev) => [...prev, { speaker: msg.speaker, text: msg.text }]);
+          const timeStr = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+          setTranscripts((prev) => [...prev, { speaker: msg.speaker, text: msg.text, time: timeStr }]);
           if (msg.speaker === "interviewer") {
             speakInterviewerCaption(msg.text);
           }
         } else if (msg.type === "interrupted") {
-          // Backend acknowledged barge-in
           voiceManager.cancel();
           audioPlayer.stop();
           isSpeakingRef.current = false;
@@ -704,7 +729,6 @@ export default function InterviewRoomPage() {
     };
   }, [sessionId, isMicMuted, speakInterviewerCaption]);
 
-  // Candidate Text or Direct Prompt Submission
   const handleSendCandidateText = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     const text = candidateInputText.trim();
@@ -718,7 +742,6 @@ export default function InterviewRoomPage() {
     dispatchCandidateTurn(prompt);
   };
 
-  // Keystroke VAD Gate: notify backend when candidate is actively typing/drawing
   const handleWorkingStateChange = (isActive: boolean) => {
     setIsCandidateWorking(isActive);
     if (isActive) {
@@ -767,7 +790,7 @@ export default function InterviewRoomPage() {
 
   const handleAdvanceStage = async () => {
     try {
-      const res = await fetch(`http://localhost:8000/api/session/${sessionId}/advance_stage`, {
+      const res = await fetch(getApiUrl(`/api/session/${sessionId}/advance_stage`), {
         method: "POST",
       });
       if (res.ok) {
@@ -795,7 +818,7 @@ export default function InterviewRoomPage() {
     if (isSwitchingQuestion) return;
     setIsSwitchingQuestion(true);
     try {
-      const res = await fetch(`http://localhost:8000/api/session/${sessionId}/switch_question`, {
+      const res = await fetch(getApiUrl(`/api/session/${sessionId}/switch_question`), {
         method: "POST",
       });
       if (res.ok) {
@@ -839,28 +862,20 @@ export default function InterviewRoomPage() {
 
           {/* Company Archetype Badge */}
           {sessionData?.company_archetype === "INDIAN_PRODUCT" && (
-            <span className="hidden sm:flex items-center gap-1 px-2 py-0.5 rounded-full bg-orange-500/10 border border-orange-500/20 text-orange-300 text-[11px] font-semibold">
+            <span className="hidden sm:flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-orange-500/10 border border-orange-500/20 text-orange-300 text-[11px] font-semibold">
               🇮🇳 Indian Product Tech
             </span>
           )}
           {sessionData?.company_archetype === "AI_STARTUP" && (
-            <span className="hidden sm:flex items-center gap-1 px-2 py-0.5 rounded-full bg-purple-500/10 border border-purple-500/20 text-purple-300 text-[11px] font-semibold">
+            <span className="hidden sm:flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-purple-500/10 border border-purple-500/20 text-purple-300 text-[11px] font-semibold">
               <Rocket className="w-3 h-3 text-purple-400" />
               <span>AI Startup</span>
             </span>
           )}
           {sessionData?.company_archetype === "FAANG_GLOBAL" && (
-            <span className="hidden sm:flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-300 text-[11px] font-semibold">
+            <span className="hidden sm:flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-300 text-[11px] font-semibold">
               <Building2 className="w-3 h-3 text-blue-400" />
               <span>Global Tech</span>
-            </span>
-          )}
-
-          {/* Gemini Live Search Grounded badge */}
-          {sessionData?.enable_live_web_search && (
-            <span className="hidden xl:flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-[10px] font-semibold">
-              <Globe className="w-3 h-3 text-emerald-400" />
-              <span>Gemini Grounded</span>
             </span>
           )}
 
@@ -898,7 +913,6 @@ export default function InterviewRoomPage() {
             })}
           </div>
 
-          {/* Typing / Thinking Hold Indicator */}
           {isCandidateWorking && (
             <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs animate-pulse">
               <Pause className="w-3 h-3" />
@@ -909,7 +923,7 @@ export default function InterviewRoomPage() {
 
         {/* Action Controls */}
         <div className="flex items-center gap-2">
-          {/* Barge-In / Cut-In Button (Visible when Interviewer is Speaking) */}
+          {/* Barge-In / Cut-In Button */}
           {isSpeaking && (
             <button
               type="button"
@@ -923,7 +937,7 @@ export default function InterviewRoomPage() {
           )}
 
           {/* Persona Selector Dropdown */}
-          <div className="flex items-center bg-slate-900 border border-slate-800 rounded-xl px-2 py-1 text-xs">
+          <div className="flex items-center bg-slate-900 border border-slate-800 rounded-xl px-2.5 py-1 text-xs">
             <UserCheck className="w-3.5 h-3.5 text-blue-400 mr-1.5" />
             <select
               value={selectedPersona.id}
@@ -950,6 +964,34 @@ export default function InterviewRoomPage() {
             <span>{isTestingVoice ? "Testing..." : "Test Voice"}</span>
           </button>
 
+          {/* Turn-Taking Input Mode Switcher (Hands-free vs Push-to-Talk) */}
+          <div className="flex items-center bg-slate-900 border border-slate-800 rounded-xl p-0.5 text-xs">
+            <button
+              type="button"
+              onClick={() => setVoiceInputMode("handsfree")}
+              className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-all ${
+                voiceInputMode === "handsfree"
+                  ? "bg-blue-600 text-white shadow-sm"
+                  : "text-slate-400 hover:text-slate-200"
+              }`}
+              title="Hands-free conversational mode: AI listens with 3.5s thinking pause tolerance"
+            >
+              Hands-Free
+            </button>
+            <button
+              type="button"
+              onClick={() => setVoiceInputMode("push_to_talk")}
+              className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-all ${
+                voiceInputMode === "push_to_talk"
+                  ? "bg-blue-600 text-white shadow-sm"
+                  : "text-slate-400 hover:text-slate-200"
+              }`}
+              title="Push-to-Talk mode: Hold Spacebar or Mic to speak, release to send (zero premature cutoffs)"
+            >
+              Push-to-Talk
+            </button>
+          </div>
+
           {/* TTS Audio Voice Toggle */}
           <button
             type="button"
@@ -971,25 +1013,6 @@ export default function InterviewRoomPage() {
           >
             {isTtsEnabled ? <Volume2 className="w-3.5 h-3.5 text-blue-400" /> : <VolumeX className="w-3.5 h-3.5" />}
             <span>Voice {isTtsEnabled ? "On" : "Muted"}</span>
-          </button>
-
-          {/* Headset vs Speaker Mode Toggle (Hands-Free Voice Barge-In) */}
-          <button
-            type="button"
-            onClick={() => setIsHeadsetMode((prev) => !prev)}
-            className={`px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 border transition-all ${
-              isHeadsetMode
-                ? "bg-emerald-950/70 border-emerald-700/60 text-emerald-300 hover:bg-emerald-900/80 shadow-sm shadow-emerald-900/20"
-                : "bg-slate-900/80 border-slate-800 text-slate-400 hover:text-slate-200"
-            }`}
-            title={
-              isHeadsetMode
-                ? `Headset Mode Active (${detectedAudioDevice}): Hands-free voice barge-in is enabled. You can interrupt the interviewer simply by speaking into your headset. Click to switch to Speaker Mode.`
-                : "Speaker Mode Active: Push/Space/Click to interrupt (prevents laptop speaker audio from cutting off the interviewer). Click to switch to Headset Mode."
-            }
-          >
-            <Headphones className={`w-3.5 h-3.5 ${isHeadsetMode ? "text-emerald-400" : "text-slate-400"}`} />
-            <span>{isHeadsetMode ? "Headset Voice Barge-In" : "Speaker Push-to-Cut"}</span>
           </button>
 
           <button
@@ -1014,7 +1037,7 @@ export default function InterviewRoomPage() {
       <div className="flex-1 flex overflow-hidden">
         {/* Left Pane (38% width - The Interview Room) */}
         <div className="w-[38%] border-r border-slate-800/80 bg-slate-950 flex flex-col p-3 gap-3 overflow-y-auto">
-          {/* AI Interviewer Avatar Tile with Dynamic Persona */}
+          {/* AI Interviewer Avatar Tile with Realistic Neural Persona */}
           <InterviewerAvatar
             isSpeaking={isSpeaking}
             frequencyLevel={frequencyLevel}
@@ -1022,44 +1045,51 @@ export default function InterviewRoomPage() {
             targetCompany={sessionData?.target_company}
             currentStage={fsmSnapshot?.current_stage || "INTRO"}
             isCandidateWorking={isCandidateWorking}
+            isInterviewerThinking={isInterviewerThinking}
           />
 
-          {/* Candidate Webcam Tile with Persistent Presence Timer */}
+          {/* Candidate Webcam Tile with Local-only Presence */}
           <CandidateWebcam
             isMicMuted={isMicMuted}
             onMuteToggle={(muted) => setIsMicMuted(muted)}
             startTime={sessionData?.created_at}
           />
 
-          {/* Live Transcript / Subtitles & Verbal Response Bar */}
-          <div className="flex-1 min-h-[220px] rounded-2xl glass-panel border border-slate-800 bg-slate-900/70 p-3.5 flex flex-col justify-between overflow-hidden">
-            <div className="overflow-y-auto flex-1 pr-1 space-y-2.5 max-h-[180px]">
+          {/* Live Transcript / Subtitles & Turn Dispatching */}
+          <div className="flex-1 min-h-[240px] rounded-2xl glass-panel border border-slate-800 bg-slate-900/80 p-3.5 flex flex-col justify-between overflow-hidden shadow-xl">
+            <div className="overflow-y-auto flex-1 pr-1 space-y-2.5 max-h-[220px]">
               <div className="flex items-center justify-between sticky top-0 bg-slate-900/90 backdrop-blur pb-1 z-10 border-b border-slate-800/60">
                 <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                  Live Interview Dialogue Stream
+                  Live Conversational Stream
                 </span>
                 <span className="text-[10px] text-emerald-400 font-medium flex items-center gap-1">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" /> Live Room
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" /> Multimodal Live Room
                 </span>
               </div>
 
               {transcripts.length === 0 ? (
-                <p className="text-xs text-slate-500 italic p-2">
-                  Waiting for interview session to begin...
-                </p>
+                <div className="p-3 text-center text-xs text-slate-400 space-y-1">
+                  <p className="font-semibold text-slate-300">Connecting to your interviewer...</p>
+                  <p className="text-[11px] text-slate-500">
+                    Feel free to speak into your microphone or type in the response bar below.
+                  </p>
+                </div>
               ) : (
                 transcripts.map((turn, idx) => (
                   <div
                     key={idx}
-                    className={`p-2.5 rounded-xl text-xs leading-relaxed ${
+                    className={`p-3 rounded-xl text-xs leading-relaxed transition-all ${
                       turn.speaker === "interviewer"
                         ? "bg-blue-950/40 border border-blue-800/40 text-blue-100"
-                        : "bg-slate-950 border border-slate-800 text-slate-200 ml-3"
+                        : "bg-slate-950/80 border border-slate-800 text-slate-200 ml-4"
                     }`}
                   >
-                    <span className="text-[10px] font-bold uppercase tracking-wider block mb-0.5 text-blue-400">
-                      {turn.speaker === "interviewer" ? selectedPersona.name : "You (Candidate)"}
-                    </span>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-blue-400">
+                        {turn.speaker === "interviewer" ? selectedPersona.name : "You (Candidate)"}
+                      </span>
+                      {turn.time && <span className="text-[9px] text-slate-500">{turn.time}</span>}
+                    </div>
                     <p className="whitespace-pre-wrap">{turn.text}</p>
                   </div>
                 ))
@@ -1067,13 +1097,13 @@ export default function InterviewRoomPage() {
 
               {/* Real-time Interviewer Thinking Indicator */}
               {isInterviewerThinking && (
-                <div className="p-2 rounded-xl text-xs bg-blue-950/40 border border-blue-800/30 text-blue-300 flex items-center gap-2 animate-pulse">
-                  <span className="w-2 h-2 rounded-full bg-blue-400 animate-ping" />
-                  <span>{selectedPersona.name} is listening & formulating response...</span>
+                <div className="p-2.5 rounded-xl text-xs bg-indigo-950/40 border border-indigo-800/40 text-indigo-300 flex items-center gap-2 animate-pulse">
+                  <span className="w-2 h-2 rounded-full bg-indigo-400 animate-ping" />
+                  <span>{selectedPersona.name} is listening & synthesizing evaluation...</span>
                 </div>
               )}
 
-              {/* Human-like Patience Prompt / Encouraging Banner */}
+              {/* Silence & Encouragement Banner */}
               {silencePrompt && !isSpeaking && (
                 <div className="p-2.5 rounded-xl text-xs bg-amber-500/10 border border-amber-500/20 text-amber-200 flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
@@ -1082,8 +1112,12 @@ export default function InterviewRoomPage() {
                   </div>
                   <button
                     type="button"
-                    onClick={() => handleSendDirectPrompt("I'm formulating my response, could you give me a minute or a quick hint?")}
-                    className="px-2 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 text-[10px] font-semibold whitespace-nowrap transition-colors"
+                    onClick={() =>
+                      handleSendDirectPrompt(
+                        "I'm formulating my response, could you give me a minute or a quick hint?"
+                      )
+                    }
+                    className="px-2.5 py-1 rounded bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 text-[10px] font-semibold whitespace-nowrap transition-colors"
                   >
                     Need Hint
                   </button>
@@ -1093,80 +1127,80 @@ export default function InterviewRoomPage() {
               <div ref={transcriptEndRef} />
             </div>
 
-            {/* Quick Action Suggestion Chips for Candidate */}
+            {/* Turn-Taking & Response Control Section */}
             <div className="pt-2 border-t border-slate-800/60 flex flex-col gap-2">
+              {/* Quick Action Suggestion Chips */}
               <div className="flex flex-wrap items-center gap-1.5">
                 <button
                   type="button"
-                  onClick={() => handleSendDirectPrompt("Can you explain the question and requirements in detail?")}
-                  className="px-2 py-0.5 rounded-md bg-slate-950 hover:bg-slate-800 border border-slate-800 text-[10px] text-slate-400 hover:text-slate-200 transition-colors"
+                  onClick={() =>
+                    handleSendDirectPrompt("Can you explain the problem and requirements in detail?")
+                  }
+                  className="px-2.5 py-1 rounded-lg bg-slate-950 hover:bg-slate-800 border border-slate-800 text-[10px] text-slate-300 hover:text-white transition-colors"
                 >
                   Explain Question
                 </button>
                 <button
                   type="button"
-                  onClick={() => handleSendDirectPrompt("Could you clarify the input constraints and edge cases?")}
-                  className="px-2 py-0.5 rounded-md bg-slate-950 hover:bg-slate-800 border border-slate-800 text-[10px] text-slate-400 hover:text-slate-200 transition-colors"
+                  onClick={() =>
+                    handleSendDirectPrompt("Could you clarify the input constraints and edge cases?")
+                  }
+                  className="px-2.5 py-1 rounded-lg bg-slate-950 hover:bg-slate-800 border border-slate-800 text-[10px] text-slate-300 hover:text-white transition-colors"
                 >
                   Clarify Constraints
                 </button>
                 <button
                   type="button"
-                  onClick={() => handleSendDirectPrompt("I'm thinking about my approach, can you give me a hint?")}
-                  className="px-2 py-0.5 rounded-md bg-slate-950 hover:bg-slate-800 border border-slate-800 text-[10px] text-slate-400 hover:text-slate-200 transition-colors"
+                  onClick={() =>
+                    handleSendDirectPrompt("I'm thinking through my approach, could you give me a targeted hint?")
+                  }
+                  className="px-2.5 py-1 rounded-lg bg-slate-950 hover:bg-slate-800 border border-slate-800 text-[10px] text-slate-300 hover:text-white transition-colors"
                 >
                   Get Hint
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
-                      setIsInterviewerThinking(true);
-                      socketRef.current.send(JSON.stringify({ type: "silence_ping", seconds_silent: 30 }));
-                    }
-                  }}
-                  className="px-2 py-0.5 rounded-md bg-slate-950 hover:bg-slate-800 border border-slate-800 text-[10px] text-slate-400 hover:text-slate-200 transition-colors"
-                  title="Prompt the interviewer to check in or guide the next step"
-                >
-                  Nudge Interviewer
                 </button>
                 {isSpeaking && (
                   <button
                     type="button"
                     onClick={handleInterrupt}
-                    className="px-2 py-0.5 rounded-md bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-[10px] text-amber-300 font-bold transition-colors ml-auto flex items-center gap-1"
+                    className="px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-[10px] text-amber-300 font-bold transition-colors ml-auto flex items-center gap-1 animate-pulse"
                   >
-                    <Hand className="w-2.5 h-2.5" /> Cut In
+                    <Hand className="w-2.5 h-2.5" /> Cut In (Space)
                   </button>
                 )}
               </div>
 
-              {/* Live Speech Recognition Preview Badge (Shown in real-time while candidate is talking) */}
+              {/* Live Speech Recognition Preview Banner */}
               {liveSpeechPreview && (
-                <div className="flex items-center justify-between gap-2 px-3 py-1.5 rounded-xl bg-blue-950/80 border border-blue-500/40 text-blue-200 text-xs shadow-lg shadow-blue-950/40 animate-in fade-in duration-200">
+                <div className="flex items-center justify-between gap-2 px-3 py-1.5 rounded-xl bg-blue-950/80 border border-blue-500/40 text-blue-200 text-xs shadow-lg shadow-blue-950/40">
                   <div className="flex items-center gap-2 overflow-hidden flex-1">
                     <span className="w-2 h-2 rounded-full bg-blue-400 animate-ping shrink-0" />
-                    <span className="font-semibold text-blue-300 text-[10px] uppercase tracking-wider shrink-0">Hearing:</span>
-                    <span className="truncate italic text-slate-100 font-medium">&ldquo;{liveSpeechPreview}&rdquo;</span>
+                    <span className="font-semibold text-blue-300 text-[10px] uppercase tracking-wider shrink-0">
+                      Hearing:
+                    </span>
+                    <span className="truncate italic text-slate-100 font-medium">
+                      &ldquo;{liveSpeechPreview}&rdquo;
+                    </span>
+                    {pauseCountdown !== null && pauseCountdown > 0 && voiceInputMode === "handsfree" && (
+                      <span className="text-[10px] text-amber-400 font-semibold px-1.5 py-0.5 rounded bg-amber-500/10">
+                        Sending in {pauseCountdown}s
+                      </span>
+                    )}
                   </div>
                   <div className="flex items-center gap-1.5 shrink-0">
                     <button
                       type="button"
-                      onClick={() => {
-                        if (speechSendTimeoutRef.current) clearTimeout(speechSendTimeoutRef.current);
-                        dispatchCandidateTurn(liveSpeechPreview);
-                      }}
+                      onClick={() => dispatchCandidateTurn(liveSpeechPreview)}
                       className="px-2.5 py-1 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-semibold text-[10px] transition-colors flex items-center gap-1 shadow-sm"
                       title="Send spoken answer now"
                     >
-                      <Send className="w-2.5 h-2.5" /> Send Now
+                      <Send className="w-2.5 h-2.5" /> Done Speaking (Enter)
                     </button>
                     <button
                       type="button"
                       onClick={() => {
-                        if (speechSendTimeoutRef.current) clearTimeout(speechSendTimeoutRef.current);
                         setLiveSpeechPreview("");
                         speechBufferRef.current = "";
+                        setPauseCountdown(null);
                       }}
                       className="p-1 rounded-lg hover:bg-blue-900/50 text-slate-400 hover:text-slate-200 transition-colors"
                       title="Discard speech"
@@ -1177,62 +1211,78 @@ export default function InterviewRoomPage() {
                 </div>
               )}
 
-              {/* Candidate Response Input Bar (Spoken or Typed) with Mic State Indicator */}
+              {/* Push-to-Talk Status Indicator */}
+              {voiceInputMode === "push_to_talk" && (
+                <div
+                  onMouseDown={() => {
+                    setIsPushToTalkActive(true);
+                    setIsMicMuted(false);
+                  }}
+                  onMouseUp={() => {
+                    setIsPushToTalkActive(false);
+                    if (speechBufferRef.current.trim().length > 0) {
+                      dispatchCandidateTurn(speechBufferRef.current.trim());
+                    }
+                  }}
+                  onTouchStart={() => {
+                    setIsPushToTalkActive(true);
+                    setIsMicMuted(false);
+                  }}
+                  onTouchEnd={() => {
+                    setIsPushToTalkActive(false);
+                    if (speechBufferRef.current.trim().length > 0) {
+                      dispatchCandidateTurn(speechBufferRef.current.trim());
+                    }
+                  }}
+                  className={`w-full py-2 px-3 rounded-xl border flex items-center justify-center gap-2 cursor-pointer transition-all select-none ${
+                    isPushToTalkActive
+                      ? "bg-rose-600 border-rose-400 text-white font-bold shadow-lg shadow-rose-600/30 scale-[0.99]"
+                      : "bg-slate-900/90 border-slate-700/80 text-slate-300 hover:bg-slate-850 hover:text-white"
+                  }`}
+                >
+                  <Mic className={`w-4 h-4 ${isPushToTalkActive ? "animate-bounce" : "text-blue-400"}`} />
+                  <span className="text-xs font-semibold">
+                    {isPushToTalkActive
+                      ? "Listening... Release when done speaking"
+                      : "Hold Spacebar or Click & Hold to Speak"}
+                  </span>
+                </div>
+              )}
+
+              {/* Candidate Response Input Form */}
               <form onSubmit={handleSendCandidateText} className="flex items-center gap-2">
                 <input
                   type="text"
                   value={candidateInputText}
                   onChange={(e) => setCandidateInputText(e.target.value)}
-                  placeholder="Speak into microphone or type your answer..."
+                  placeholder={
+                    voiceInputMode === "handsfree"
+                      ? "Speak freely into microphone or type your answer..."
+                      : "Type answer or hold Spacebar to talk..."
+                  }
                   className="flex-1 bg-slate-950 border border-slate-800 focus:border-blue-500 rounded-xl px-3 py-1.5 text-xs text-slate-200 placeholder-slate-500 outline-none transition-colors"
                 />
 
-                {/* Mic Status Indicator Badge */}
-                {!isMicMuted ? (
-                  <div
-                    className={`flex items-center gap-1 text-[10px] font-semibold px-2 py-1 rounded-lg border shrink-0 transition-colors ${
-                      liveSpeechPreview
-                        ? "bg-blue-950/70 text-blue-400 border-blue-700/50"
-                        : isLiveListening
-                        ? "bg-emerald-950/60 text-emerald-400 border-emerald-800/40"
-                        : "bg-amber-950/40 text-amber-400 border-amber-800/40"
-                    }`}
-                    title={
-                      liveSpeechPreview
-                        ? "Hearing candidate speech"
-                        : isLiveListening
-                        ? "Microphone is live and listening"
-                        : "Reconnecting mic listener..."
-                    }
-                  >
-                    <span
-                      className={`w-1.5 h-1.5 rounded-full ${
-                        liveSpeechPreview
-                          ? "bg-blue-400 animate-ping"
-                          : isLiveListening
-                          ? "bg-emerald-400 animate-pulse"
-                          : "bg-amber-400 animate-pulse"
-                      }`}
-                    />
-                    <span className="hidden sm:inline">
-                      {liveSpeechPreview ? "Speaking" : isLiveListening ? "Listening" : "Connecting..."}
-                    </span>
-                  </div>
-                ) : (
-                  <div
-                    className="flex items-center gap-1 text-[10px] text-slate-500 font-medium px-2 py-1 rounded-lg bg-slate-900 border border-slate-800 shrink-0"
-                    title="Microphone is muted (typing mode)"
-                  >
-                    <span className="w-1.5 h-1.5 rounded-full bg-slate-600" />
-                    <span className="hidden sm:inline">Muted</span>
-                  </div>
-                )}
+                {/* Mic Indicator / Toggle */}
+                <button
+                  type="button"
+                  onClick={() => setIsMicMuted(!isMicMuted)}
+                  className={`px-2.5 py-1.5 rounded-xl border flex items-center gap-1.5 text-[11px] font-semibold transition-all ${
+                    isMicMuted
+                      ? "bg-rose-950/30 border-rose-800/40 text-rose-400 hover:bg-rose-950/50"
+                      : "bg-emerald-950/40 border-emerald-800/40 text-emerald-400 hover:bg-emerald-950/60"
+                  }`}
+                  title={isMicMuted ? "Click to unmute microphone" : "Click to mute microphone"}
+                >
+                  {isMicMuted ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5 animate-pulse" />}
+                  <span className="hidden sm:inline">{isMicMuted ? "Muted" : "Live"}</span>
+                </button>
 
                 <button
                   type="submit"
                   disabled={!candidateInputText.trim()}
                   className="p-2 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-40 disabled:hover:bg-blue-600 text-white transition-colors"
-                  title="Send answer to interviewer"
+                  title="Send answer"
                 >
                   <Send className="w-3.5 h-3.5" />
                 </button>
@@ -1283,7 +1333,7 @@ export default function InterviewRoomPage() {
               </button>
             </div>
 
-            {/* Next Problem / Question Bank Switcher */}
+            {/* Next Problem Switcher */}
             <div className="flex items-center gap-2">
               <button
                 type="button"

@@ -178,6 +178,9 @@ class AgenticInterviewer:
         self.recent_company_questions: list[str] = []
         self.silence_count: int = 0
         self.turns_in_current_stage: int = 0
+        self.used_question_keys: set[str] = set()
+        self.candidate_name: str | None = None
+        self.fallback_turn_index: int = 0
 
         # Persistent Gemini Chat Session (lazily initialized)
         self._chat_session = None
@@ -446,11 +449,59 @@ class AgenticInterviewer:
         stage: InterviewStage,
         active_question: QuestionItem | None,
     ) -> str:
-        """Fallback response when LLM is offline or in test environments.
-        Recognizes technical concepts to provide meaningful domain follow-ups."""
-        u_lower = user_text.lower()
+        """Context-aware, non-repetitive conversational engine for offline and simulated modes.
+        Understands candidate greetings, requests for constraints, hint inquiries, and domain answers."""
+        u_lower = user_text.lower().strip()
+        self.fallback_turn_index += 1
 
-        # --- TRACK 1: ML BREADTH ROUND ---
+        # 1. Candidate Introductions & Greetings
+        if any(w in u_lower for w in ["hi ", "hello", "hey", "my name is", "i am ", "i'm ", "years of experience", "background in"]):
+            if "my name is" in u_lower:
+                parts = u_lower.split("my name is")
+                if len(parts) > 1 and parts[1].strip():
+                    self.candidate_name = parts[1].strip().split()[0].strip(".,!?:;").capitalize()
+            elif "i am " in u_lower:
+                parts = u_lower.split("i am ")
+                if len(parts) > 1 and parts[1].strip():
+                    first_word = parts[1].strip().split()[0].strip(".,!?:;")
+                    if len(first_word) > 2 and first_word not in ["a", "an", "the", "currently", "working"]:
+                        self.candidate_name = first_word.capitalize()
+
+            name_salutation = f" {self.candidate_name}" if self.candidate_name else ""
+            q_lead = f" For our first problem today, '{active_question.title}', " if active_question else " To start our technical evaluation, "
+            return (
+                f"Nice to meet you{name_salutation}! Thank you for walking me through your background. "
+                f"{q_lead}how do you typically structure your initial solution and validate your architectural assumptions?"
+            )
+
+        # 2. Clarification & Constraint Requests
+        if any(w in u_lower for w in ["constraint", "constraints", "requirement", "requirements", "sla", "qps", "latency", "explain the question", "explain the problem", "detail"]):
+            if active_question:
+                return (
+                    f"Good instinct to clarify requirements upfront. For '{active_question.title}': "
+                    f"Assume target p99 latency SLA is under 25ms, traffic volume is around 15,000 QPS, and the system needs to gracefully handle missing features. "
+                    "How would you formulate your baseline approach to meet that latency budget?"
+                )
+            return (
+                "Good question on constraints. Assume standard production SLA: p99 under 30ms, roughly 10k QPS peak, "
+                "with distributed sharding. Walk me through your design choices given those boundaries."
+            )
+
+        # 3. Hint Requests
+        if any(w in u_lower for w in ["hint", "stuck", "suggest", "unsure", "not sure", "help", "nudge"]):
+            if active_question:
+                criteria = ", ".join(active_question.rubric_criteria[:2]) if active_question.rubric_criteria else "decoupling ranking from retrieval"
+                return (
+                    f"Here is a targeted hint: Think about {criteria}. "
+                    "Consider separating the problem into an efficient high-recall candidate generator followed by a precision ranker. "
+                    "What data structure or algorithmic formulation would you use for that first pass?"
+                )
+            return (
+                "Here is a helpful hint: Start by establishing a simple baseline that solves the core problem correctly. "
+                "Then we can optimize the Big-O time and space complexity together. How would you sketch the initial logic?"
+            )
+
+        # 4. TRACK 1: ML BREADTH ROUND
         if stage == InterviewStage.ML_BREADTH or self.interview_mode == InterviewMode.ML_BREADTH:
             if any(w in u_lower for w in ["regularization", "l1", "l2", "lasso", "ridge"]):
                 return (
@@ -474,16 +525,15 @@ class AgenticInterviewer:
                     "Tree-based models excel on tabular data. What is the fundamental difference in how Random Forests reduce variance via bagging "
                     "versus how Gradient Boosted Trees reduce bias via sequential residual fitting?"
                 )
-            return (
-                f"Interesting approach. Can you walk me through the specific trade-offs you'd consider "
-                f"when deploying that in a production setting at {self.target_company}'s scale?"
-            )
+            if any(w in u_lower for w in ["gradient descent", "sgd", "adam", "learning rate", "optimizer"]):
+                return (
+                    "Adam computes adaptive moments for each parameter. "
+                    "In what scenarios can Adam's second-moment estimation cause convergence instability, and why is weight decay decoupled in AdamW?"
+                )
 
-        # --- TRACK 2: ML DEPTH ROUND ---
+        # 5. TRACK 2: ML DEPTH ROUND
         if stage == InterviewStage.ML_DEPTH or self.interview_mode == InterviewMode.ML_DEPTH:
-            if any(
-                w in u_lower for w in ["loss", "gradient", "cross-entropy", "sigmoid", "softmax"]
-            ):
+            if any(w in u_lower for w in ["loss", "gradient", "cross-entropy", "sigmoid", "softmax"]):
                 return (
                     "When computing the loss gradient for sigmoid activations, explain how saturation can cause "
                     "gradients to vanish during backpropagation, and how modern initialization or normalization stabilizes this."
@@ -499,16 +549,9 @@ class AgenticInterviewer:
                     "In Low-Rank Adaptation (LoRA), we decompose weight updates into W + B * A where B is d x r and A is r x k. "
                     "How do you initialize matrices A and B at the start of training so that the initial forward pass is an exact identity with the base model?"
                 )
-            return (
-                "Let me push on that a bit more. Can you derive the gradient for that loss function, "
-                "and explain what happens numerically when the model is highly confident but wrong?"
-            )
 
-        # --- TRACK 3: GENERATIVE AI & LLM ---
-        if (
-            stage == InterviewStage.GENERATIVE_AI
-            or self.interview_mode == InterviewMode.GENERATIVE_AI_LLM
-        ):
+        # 6. TRACK 3: GENERATIVE AI & LLM
+        if stage == InterviewStage.GENERATIVE_AI or self.interview_mode == InterviewMode.GENERATIVE_AI_LLM:
             if any(w in u_lower for w in ["rag", "chunk", "chunking", "retrieval", "hybrid"]):
                 return (
                     "A hybrid dense-sparse retrieval pipeline with BM25 and vector embeddings is solid. "
@@ -524,12 +567,8 @@ class AgenticInterviewer:
                     "KV cache memory management is the primary bottleneck for concurrent LLM serving. "
                     "How does PagedAttention eliminate internal and external memory fragmentation, and what is the latency benefit of Speculative Decoding with a small draft model?"
                 )
-            return (
-                "That's a reasonable starting point. How would you handle retrieval latency "
-                "and ensure faithfulness in the generated output at production scale?"
-            )
 
-        # --- TRACK 4: CODING & DESIGN ---
+        # 7. TRACK 4: CODING & SYSTEM DESIGN
         if stage == InterviewStage.LIVE_CODING_SQL_PYTHON:
             if any(w in u_lower for w in ["window", "partition", "row_number", "dense_rank"]):
                 return (
@@ -552,21 +591,24 @@ class AgenticInterviewer:
                     "A dual-tier feature store with Redis for online inference and Parquet for training works well. "
                     f"At {self.target_company}'s scale, how do you handle feature freshness when network latency causes out-of-order writes?"
                 )
-            return (
-                "Makes sense. What are your p99 latency budgets per component, "
-                "and where are the potential single points of failure under peak traffic?"
-            )
+            if any(w in u_lower for w in ["kafka", "flink", "streaming", "event"]):
+                return (
+                    "Streaming event architectures handle real-time ingestion cleanly. "
+                    "How do you guarantee exactly-once processing semantics during sudden consumer node crashes?"
+                )
 
-        if stage == InterviewStage.WRAP_UP:
-            return (
-                "It was a pleasure working through these technical problems with you today. "
-                "Do you have any questions for me about our architecture, team dynamics, or technology stack?"
-            )
+        # 8. Dynamic Non-Repetitive Progressive Follow-Ups
+        follow_up_pool = [
+            f"That gives us a solid direction. Looking at {self.target_company}'s production requirements, what is the single largest bottleneck in this design under peak load?",
+            "Makes sense. How would you detect and mitigate data drift or concept drift once this model runs in production for 6 months?",
+            "Let's look at failure modes. If the primary caching layer experiences a cold-start restart, how does your system prevent a cascading database outage?",
+            "Good analysis. Walk me through the offline evaluation metrics versus the online business KPIs you would track in an A/B test.",
+            f"Understood. How would you structure cross-functional ownership between data engineering, ML modeling, and platform teams for this system at {self.target_company}?",
+        ]
 
-        return (
-            f"Got it. Looking at how that applies to the {self.target_role} role at {self.target_company}, "
-            "what would be your next technical step?"
-        )
+        # Rotate through pool non-repetitively
+        chosen = follow_up_pool[self.fallback_turn_index % len(follow_up_pool)]
+        return chosen
 
     def _generate_fallback_code_feedback(
         self,

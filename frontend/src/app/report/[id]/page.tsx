@@ -4,6 +4,7 @@ import React, { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, Sparkles, RefreshCw } from "lucide-react";
 import ScorecardView, { ScorecardData } from "@/components/ScorecardView";
+import { getApiUrl } from "@/lib/api";
 
 export default function ReportPage() {
   const params = useParams();
@@ -24,11 +25,11 @@ export default function ReportPage() {
       try {
         const apiKey = typeof window !== "undefined" ? sessionStorage.getItem("ai_interviewer_api_key") || "" : "";
         // First try getting existing report
-        let res = await fetch(`http://localhost:8000/api/session/${sessionId}/report`);
+        let res = await fetch(getApiUrl(`/api/session/${sessionId}/report`));
         if (!res.ok) {
           // If not generated yet, trigger evaluation
           res = await fetch(
-            `http://localhost:8000/api/session/${sessionId}/evaluate${apiKey ? `?api_key=${apiKey}` : ""}`,
+            getApiUrl(`/api/session/${sessionId}/evaluate${apiKey ? `?api_key=${apiKey}` : ""}`),
             { method: "POST" }
           );
         }
@@ -42,7 +43,7 @@ export default function ReportPage() {
 
         // Fetch complete interview transcripts for review log
         try {
-          const tRes = await fetch(`http://localhost:8000/api/session/${sessionId}/transcripts`);
+          const tRes = await fetch(getApiUrl(`/api/session/${sessionId}/transcripts`));
           if (tRes.ok) {
             const tData = await tRes.json();
             setTranscripts(tData);

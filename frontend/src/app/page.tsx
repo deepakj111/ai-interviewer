@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 import {
   Sparkles,
@@ -12,14 +13,17 @@ import {
   Code,
   Cpu,
   CheckCircle,
-  Lock,
-  X,
-  UploadCloud,
   Radio,
   UserCheck,
   Globe,
+  UploadCloud,
+  X,
+  Play,
+  Zap,
+  Activity,
 } from "lucide-react";
 import { INTERVIEWER_PERSONAS, voiceManager } from "@/lib/voiceManager";
+import { getApiUrl, checkBackendHealth } from "@/lib/api";
 
 export default function OnboardingPage() {
   const router = useRouter();
@@ -39,10 +43,27 @@ export default function OnboardingPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  React.useEffect(() => {
+  // Live Backend Connection Status
+  const [backendHealth, setBackendHealth] = useState<{
+    ok: boolean;
+    latencyMs: number;
+    statusText: string;
+  } | null>(null);
+
+  useEffect(() => {
+    async function pingBackend() {
+      const health = await checkBackendHealth();
+      setBackendHealth(health);
+    }
+    pingBackend();
+    const interval = setInterval(pingBackend, 10000);
+    return () => clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
     async function loadQuestions() {
       try {
-        const res = await fetch("http://localhost:8000/api/questions");
+        const res = await fetch(getApiUrl("/api/questions"));
         if (res.ok) {
           const qs = await res.json();
           setAvailableQuestions(qs);
@@ -57,7 +78,6 @@ export default function OnboardingPage() {
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       setResumeFile(e.target.files[0]);
-      // If user had default track, unlock and switch to Full Loop
       setInterviewMode("FULL_LOOP");
     }
   };
@@ -74,7 +94,6 @@ export default function OnboardingPage() {
     { name: "Zomato", archetype: "INDIAN_PRODUCT", role: "Senior Applied Scientist" },
     { name: "CRED", archetype: "INDIAN_PRODUCT", role: "Senior Data Scientist" },
     { name: "Razorpay", archetype: "INDIAN_PRODUCT", role: "Staff Machine Learning Engineer" },
-    { name: "Flipkart", archetype: "INDIAN_PRODUCT", role: "Senior Applied Scientist" },
     { name: "Google", archetype: "FAANG_GLOBAL", role: "Senior Machine Learning Engineer" },
     { name: "Meta", archetype: "FAANG_GLOBAL", role: "Research / Applied Scientist" },
     { name: "Stripe", archetype: "FAANG_GLOBAL", role: "Staff Infrastructure Engineer" },
@@ -87,19 +106,24 @@ export default function OnboardingPage() {
     setTargetRole(preset.role);
   };
 
-  const handleStartInterview = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleStartInterview = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
     setIsLoading(true);
+    setErrorMsg(null);
+
     if ((interviewMode === "FULL_LOOP" || interviewMode === "RESUME_DEEP_DIVE") && !resumeFile) {
-      setErrorMsg("Please upload a PDF resume for tracks with Resume Probing, or select ML Breadth, ML Depth, GenAI, or Coding.");
+      setErrorMsg(
+        "Please upload a PDF resume for tracks with Resume Probing, or select ML Breadth, ML Depth, GenAI, or Coding."
+      );
       setIsLoading(false);
       return;
     }
 
-    // Persist API key in sessionStorage for BYOK security
     if (apiKey.trim()) {
       sessionStorage.setItem("ai_interviewer_api_key", apiKey.trim());
     }
+    sessionStorage.setItem("ai_interviewer_persona", selectedPersonaId);
+    voiceManager.setPersona(selectedPersonaId);
 
     try {
       const formData = new FormData();
@@ -121,7 +145,7 @@ export default function OnboardingPage() {
         formData.append("question_id", selectedQuestionId.trim());
       }
 
-      const res = await fetch("http://localhost:8000/api/session/init", {
+      const res = await fetch(getApiUrl("/api/session/init"), {
         method: "POST",
         body: formData,
       });
@@ -134,20 +158,36 @@ export default function OnboardingPage() {
       router.push(`/interview/${data.session_id}`);
     } catch (err: any) {
       console.error(err);
-      setErrorMsg(err.message || "Failed to initialize interview session. Ensure backend is running.");
+      setErrorMsg(
+        err.message || "Failed to initialize interview session. Ensure the backend server is running."
+      );
     } finally {
       setIsLoading(false);
     }
   };
 
+  const handleQuickDemoLaunch = () => {
+    setInterviewMode("ML_BREADTH");
+    setTargetCompany("Google");
+    setCompanyArchetype("FAANG_GLOBAL");
+    setTargetRole("Senior Machine Learning Engineer");
+    handleStartInterview();
+  };
+
+  const handleTestVoice = (personaId: string) => {
+    if (isTestingVoice) return;
+    setIsTestingVoice(true);
+    voiceManager.setPersona(personaId);
+    const persona = voiceManager.getPersona();
+    voiceManager.speak(
+      `Hello! I'm ${persona.name}. I'm ready to conduct your technical interview.`,
+      {
+        onEnd: () => setIsTestingVoice(false),
+      }
+    );
+  };
+
   const modes = [
-    {
-      id: "FULL_LOOP",
-      title: "Full Loop (Comprehensive)",
-      desc: "Complete 45-min loop: Intro → Resume Probing → Coding (SQL/Python) → ML System Design → Wrap-Up",
-      icon: Layers,
-      requiresResume: true,
-    },
     {
       id: "ML_BREADTH",
       title: "ML Breadth Round",
@@ -184,6 +224,13 @@ export default function OnboardingPage() {
       requiresResume: false,
     },
     {
+      id: "FULL_LOOP",
+      title: "Full Loop (Comprehensive)",
+      desc: "Complete 45-min loop: Intro → Resume Probing → Coding (SQL/Python) → ML System Design → Wrap-Up",
+      icon: Layers,
+      requiresResume: true,
+    },
+    {
       id: "RESUME_DEEP_DIVE",
       title: "Resume Bar-Raiser",
       desc: "3-layer grilling probes on technical metrics, leakage, latency SLAs, and drift",
@@ -207,54 +254,159 @@ export default function OnboardingPage() {
           <div>
             <span className="text-xl font-black tracking-tight text-white">ai-interviewer</span>
             <span className="block text-[11px] text-blue-400 font-medium">
-              Privacy-First Multimodal Bar-Raiser
+              Multimodal Technical Bar-Raiser (2026 Edition)
             </span>
           </div>
         </div>
 
-        <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-900 border border-slate-800 text-xs text-slate-300">
-          <ShieldCheck className="w-4 h-4 text-emerald-400" />
-          <span>Local-First & BYOK</span>
+        <div className="flex items-center gap-3">
+          {/* Backend Status Pill */}
+          <div
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-xs font-semibold ${
+              backendHealth?.ok
+                ? "bg-emerald-950/50 border-emerald-800/50 text-emerald-300"
+                : "bg-amber-950/40 border-amber-800/40 text-amber-300"
+            }`}
+          >
+            <span
+              className={`w-2 h-2 rounded-full ${
+                backendHealth?.ok ? "bg-emerald-400 animate-pulse" : "bg-amber-400 animate-ping"
+              }`}
+            />
+            <span>
+              {backendHealth?.ok
+                ? `Backend Online (${backendHealth.latencyMs}ms)`
+                : "Checking Backend..."}
+            </span>
+          </div>
+
+          <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-900 border border-slate-800 text-xs text-slate-300">
+            <ShieldCheck className="w-4 h-4 text-emerald-400" />
+            <span>Local-First & BYOK</span>
+          </div>
         </div>
       </header>
 
       {/* Hero & Setup Form */}
       <div className="max-w-4xl mx-auto w-full my-8 z-10">
         <div className="text-center mb-8">
-          <h1 className="text-4xl md:text-5xl font-black text-transparent bg-clip-text bg-gradient-to-r from-white via-slate-200 to-slate-400 tracking-tight">
+          <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-400 text-xs font-semibold uppercase tracking-wider mb-3">
+            <Zap className="w-3.5 h-3.5" /> Next-Gen AI Interview Simulation
+          </div>
+          <h1 className="text-4xl md:text-5xl font-black text-transparent bg-clip-text bg-gradient-to-r from-white via-slate-100 to-slate-400 tracking-tight">
             Rigorous Interview Preparation for Senior ML & DS
           </h1>
           <p className="text-slate-400 text-sm md:text-base mt-3 max-w-2xl mx-auto leading-relaxed">
-            Zero sycophancy. Realistic 3-layer deep technical probing. Powered by Gemini Multimodal Live,
-            Pyodide, and DuckDB-WASM running 100% private on your machine.
+            Realistic turn-taking dialogue, photorealistic AI interviewer personas, zero sycophancy,
+            in-browser Monaco IDE with DuckDB and Pyodide, and post-interview BARS scorecards.
           </p>
+
+          {/* Quick Demo Launch Button */}
+          <div className="mt-6 flex items-center justify-center gap-3">
+            <button
+              type="button"
+              onClick={handleQuickDemoLaunch}
+              disabled={isLoading}
+              className="px-6 py-3 rounded-xl bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 text-white font-bold text-sm shadow-xl shadow-blue-500/25 flex items-center gap-2 transition-all transform hover:scale-[1.02]"
+            >
+              <Play className="w-4 h-4 fill-white" />
+              <span>Instant 1-Click Practice Demo</span>
+            </button>
+          </div>
         </div>
 
         {errorMsg && (
-          <div className="mb-6 p-4 rounded-xl bg-rose-950/40 border border-rose-800/60 text-rose-300 text-xs">
-            {errorMsg}
+          <div className="mb-6 p-4 rounded-xl bg-rose-950/40 border border-rose-800/60 text-rose-300 text-xs flex items-center justify-between">
+            <span>{errorMsg}</span>
+            <button type="button" onClick={() => setErrorMsg(null)} className="p-1 hover:text-white">
+              <X className="w-4 h-4" />
+            </button>
           </div>
         )}
 
         <form onSubmit={handleStartInterview} className="space-y-6">
-          {/* Section 1: BYOK API Key & Privacy */}
+          {/* Section 1: Choose Your AI Interviewer Persona */}
+          <div className="p-6 rounded-2xl glass-panel border border-slate-800 bg-slate-900/60 shadow-xl">
+            <div className="flex items-center justify-between mb-4">
+              <label className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
+                <UserCheck className="w-4 h-4 text-blue-400" /> Select Your AI Interviewer
+              </label>
+              <span className="text-[11px] text-slate-400">Photorealistic Neural Personas</span>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {INTERVIEWER_PERSONAS.map((persona) => {
+                const isSelected = selectedPersonaId === persona.id;
+                return (
+                  <div
+                    key={persona.id}
+                    onClick={() => setSelectedPersonaId(persona.id)}
+                    className={`p-4 rounded-2xl border transition-all cursor-pointer flex flex-col items-center text-center relative overflow-hidden ${
+                      isSelected
+                        ? "bg-blue-600/15 border-blue-500 shadow-xl shadow-blue-500/15 ring-1 ring-blue-400"
+                        : "bg-slate-950/60 border-slate-800 hover:border-slate-700"
+                    }`}
+                  >
+                    {isSelected && (
+                      <div className="absolute top-2 right-2 p-1 rounded-full bg-blue-500 text-white">
+                        <CheckCircle className="w-3.5 h-3.5" />
+                      </div>
+                    )}
+
+                    <div className="relative w-20 h-20 rounded-full overflow-hidden mb-3 border-2 border-slate-700 shadow-md">
+                      <Image
+                        src={persona.avatarImage}
+                        alt={persona.name}
+                        fill
+                        className="object-cover object-top"
+                      />
+                    </div>
+
+                    <h3 className="font-bold text-sm text-slate-100">{persona.name}</h3>
+                    <span className="text-[11px] text-blue-400 font-semibold mb-1">
+                      {persona.title}
+                    </span>
+                    <p className="text-[11px] text-slate-400 leading-snug line-clamp-3 mb-3">
+                      {persona.description}
+                    </p>
+
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleTestVoice(persona.id);
+                      }}
+                      className="mt-auto px-2.5 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 text-[10px] text-slate-300 font-semibold flex items-center gap-1 transition-colors"
+                    >
+                      <Radio className="w-3 h-3 text-blue-400" />
+                      <span>Preview Voice</span>
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Section 2: BYOK API Key (Optional) */}
           <div className="p-6 rounded-2xl glass-panel border border-slate-800 bg-slate-900/60">
             <div className="flex items-center justify-between mb-3">
               <label className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
                 <Key className="w-4 h-4 text-blue-400" /> Gemini API Key (BYOK)
               </label>
-              <span className="text-[11px] text-slate-500">Optional (Zero-Key Local Mode enabled)</span>
+              <span className="text-[11px] text-emerald-400 font-medium">
+                Optional — 100% Functional Zero-Key Offline Mode Included
+              </span>
             </div>
             <input
               type="password"
-              placeholder="AIzaSy... (Leave blank for zero-key local mode)"
+              placeholder="AIzaSy... (Optional: leave blank for zero-key local mode)"
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
               className="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-blue-500 transition-colors font-mono"
             />
           </div>
 
-          {/* Section 2: Target Position, Company & Engineering Archetype */}
+          {/* Section 3: Target Position, Company & Engineering Archetype */}
           <div className="space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="p-5 rounded-2xl glass-panel border border-slate-800 bg-slate-900/60">
@@ -311,20 +463,20 @@ export default function OnboardingPage() {
                 {
                   id: "INDIAN_PRODUCT",
                   title: "🇮🇳 Indian Product Tech",
-                  subtitle: "Swiggy, CRED, Zomato, Razorpay, Flipkart",
-                  desc: "Hyperlocal delivery surges, UPI fraud, high concurrency, pragmatic unit economics",
+                  subtitle: "Swiggy, CRED, Zomato, Razorpay",
+                  desc: "Hyperlocal surges, UPI fraud, high concurrency, pragmatic unit economics",
                 },
                 {
                   id: "FAANG_GLOBAL",
                   title: "🏢 Global Tech / FAANG",
-                  subtitle: "Google, Meta, Stripe, Netflix, Uber",
-                  desc: "Massive distributed scale, formal p99 latency SLAs, theoretical statistical depth",
+                  subtitle: "Google, Meta, Stripe, Netflix",
+                  desc: "Massive distributed scale, formal p99 latency SLAs, statistical depth",
                 },
                 {
                   id: "AI_STARTUP",
                   title: "🚀 AI Startups & Labs",
-                  subtitle: "Perplexity, Cursor, Agentic AI, Series A-C",
-                  desc: "Rapid zero-to-one velocity, vLLM cost optimization, agent tool-calling, pragmatism",
+                  subtitle: "Perplexity, Cursor, Agentic AI",
+                  desc: "Rapid velocity, vLLM cost optimization, agent tool-calling, pragmatism",
                 },
               ].map((arch) => {
                 const isSelected = companyArchetype === arch.id;
@@ -350,317 +502,117 @@ export default function OnboardingPage() {
                 );
               })}
             </div>
-
-            {/* Gemini Native Google Search Grounding Toggle */}
-            <div className="flex items-center justify-between p-3.5 rounded-xl bg-slate-900/70 border border-slate-800">
-              <div className="flex items-center gap-2.5">
-                <div className="p-2 rounded-lg bg-blue-600/20 text-blue-400 border border-blue-500/30">
-                  <Globe className="w-4 h-4" />
-                </div>
-                <div>
-                  <span className="text-xs font-semibold text-slate-200 block">
-                    Gemini Google Search Grounding (Live 2025/2026 Questions)
-                  </span>
-                  <span className="text-[11px] text-slate-400">
-                    Use native Gemini search tool to pull recently asked actual interview questions for {targetCompany}
-                  </span>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setEnableLiveWebSearch(!enableLiveWebSearch)}
-                className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
-                  enableLiveWebSearch ? "bg-blue-600" : "bg-slate-800"
-                }`}
-              >
-                <span
-                  className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
-                    enableLiveWebSearch ? "translate-x-4" : "translate-x-0"
-                  }`}
-                />
-              </button>
-            </div>
           </div>
 
-          {/* Section 3: Resume Upload (Optional) */}
+          {/* Section 4: Select Interview Track */}
           <div className="p-6 rounded-2xl glass-panel border border-slate-800 bg-slate-900/60">
-            <div className="flex items-center justify-between mb-2">
-              <label className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
-                <FileText className="w-4 h-4 text-blue-400" /> Upload PDF Resume
-              </label>
-              <span className="text-[11px] text-blue-400 font-semibold uppercase tracking-wider">
-                Optional
-              </span>
-            </div>
-            <p className="text-xs text-slate-400 mb-3">
-              Upload your resume to unlock the <strong>Resume Bar-Raiser</strong> track and enable targeted 3-layer grilling probes.
-            </p>
-
-            {resumeFile ? (
-              <div className="flex items-center justify-between p-3.5 rounded-xl bg-slate-950 border border-slate-800">
-                <div className="flex items-center gap-3">
-                  <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                    <CheckCircle className="w-4 h-4" />
-                  </div>
-                  <div>
-                    <span className="text-xs font-semibold text-slate-200 block truncate max-w-xs md:max-w-md">
-                      {resumeFile.name}
-                    </span>
-                    <span className="text-[10px] text-emerald-400 font-medium">
-                      {(resumeFile.size / 1024).toFixed(1)} KB • Ready for extraction
-                    </span>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={handleRemoveResume}
-                  className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-rose-950/30 transition-colors"
-                  title="Remove uploaded resume"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-            ) : (
-              <label className="flex flex-col items-center justify-center p-6 border-2 border-dashed border-slate-800 hover:border-blue-500/50 rounded-xl cursor-pointer bg-slate-950/40 hover:bg-slate-950/80 transition-all">
-                <UploadCloud className="w-8 h-8 text-slate-500 mb-2" />
-                <span className="text-xs font-semibold text-slate-300">
-                  Click to browse or drag and drop your PDF resume
-                </span>
-                <span className="text-[10px] text-slate-500 mt-1">
-                  PDF format (Strictly processed local-only)
-                </span>
-                <input
-                  type="file"
-                  accept=".pdf"
-                  onChange={handleFileChange}
-                  className="hidden"
-                />
-              </label>
-            )}
-          </div>
-
-          {/* Section 4: Interview Mode Selector */}
-          <div className="space-y-3">
-            <div className="flex items-center justify-between pl-1">
-              <label className="text-xs font-bold uppercase tracking-wider text-slate-300 block">
-                Select Interview Track
-              </label>
-              {!resumeFile && (
-                <span className="text-[11px] text-amber-400/90 flex items-center gap-1 font-medium">
-                  <Lock className="w-3 h-3" /> Resume-based tracks locked without upload
-                </span>
-              )}
-            </div>
+            <label className="text-xs font-bold uppercase tracking-wider text-slate-300 block mb-4">
+              Select Interview Track
+            </label>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {modes.map((m) => {
-                const Icon = m.icon;
-                const isSelected = interviewMode === m.id;
-                const isDisabled = m.requiresResume && !resumeFile;
-
+              {modes.map((mode) => {
+                const isSelected = interviewMode === mode.id;
+                const Icon = mode.icon;
                 return (
                   <div
-                    key={m.id}
-                    onClick={() => {
-                      if (!isDisabled) {
-                        setInterviewMode(m.id);
-                      }
-                    }}
-                    className={`p-4 rounded-2xl transition-all border relative ${
-                      isDisabled
-                        ? "opacity-45 bg-slate-950/50 border-slate-800/50 cursor-not-allowed select-none"
-                        : isSelected
-                        ? "bg-blue-600/10 border-blue-500 shadow-lg shadow-blue-500/10 cursor-pointer"
-                        : "bg-slate-900/50 border-slate-800 hover:border-slate-700 cursor-pointer"
+                    key={mode.id}
+                    onClick={() => setInterviewMode(mode.id)}
+                    className={`p-4 rounded-xl border transition-all cursor-pointer flex items-start gap-3 ${
+                      isSelected
+                        ? "bg-blue-600/15 border-blue-500 shadow-md shadow-blue-500/10"
+                        : "bg-slate-950/40 border-slate-800 hover:border-slate-700"
                     }`}
                   >
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="flex items-center gap-2.5">
-                        <div
-                          className={`p-2 rounded-lg ${
-                            isDisabled
-                              ? "bg-slate-800 text-slate-500"
-                              : isSelected
-                              ? "bg-blue-600 text-white"
-                              : "bg-slate-800 text-slate-400"
-                          }`}
-                        >
-                          <Icon className="w-4 h-4" />
-                        </div>
-                        <h3 className={`text-sm font-semibold ${isDisabled ? "text-slate-400" : "text-slate-200"}`}>
-                          {m.title}
-                        </h3>
-                      </div>
-
-                      {isDisabled ? (
-                        <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-slate-800 text-[10px] text-slate-400 font-medium">
-                          <Lock className="w-3 h-3 text-slate-400" />
-                          <span>Requires Resume</span>
-                        </div>
-                      ) : isSelected ? (
-                        <CheckCircle className="w-4 h-4 text-blue-400" />
-                      ) : null}
+                    <div
+                      className={`p-2 rounded-lg ${
+                        isSelected ? "bg-blue-600 text-white" : "bg-slate-800 text-slate-400"
+                      }`}
+                    >
+                      <Icon className="w-4 h-4" />
                     </div>
-
-                    <p className={`text-xs pl-1 leading-relaxed ${isDisabled ? "text-slate-500" : "text-slate-400"}`}>
-                      {m.desc}
-                    </p>
+                    <div className="flex-1">
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-xs font-bold text-slate-200">{mode.title}</span>
+                        {isSelected && <CheckCircle className="w-3.5 h-3.5 text-blue-400" />}
+                      </div>
+                      <p className="text-[11px] text-slate-400 leading-snug">{mode.desc}</p>
+                    </div>
                   </div>
                 );
               })}
             </div>
           </div>
 
-          {/* Section 5: Question Variety & Focus Selector */}
-          <div className="p-6 rounded-2xl glass-panel border border-slate-800 bg-slate-900/60">
-            <div className="flex items-center justify-between mb-2">
-              <label className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
-                <Code className="w-4 h-4 text-blue-400" /> Practice Question Focus & Variety
+          {/* Section 5: Resume Upload (Required for Full Loop & Resume Probing) */}
+          {(interviewMode === "FULL_LOOP" || interviewMode === "RESUME_DEEP_DIVE") && (
+            <div className="p-6 rounded-2xl glass-panel border border-slate-800 bg-slate-900/60">
+              <label className="text-xs font-bold uppercase tracking-wider text-slate-300 block mb-3">
+                Upload Candidate PDF Resume
               </label>
-              <span className="text-[11px] text-emerald-400 font-semibold">
-                21 Curated Problems in Bank
-              </span>
-            </div>
-            <p className="text-xs text-slate-400 mb-3">
-              Practice over multiple weeks with fresh technical scenarios. Select an exact problem or let the AI Bar-Raiser dynamically randomize for you.
-            </p>
-            <select
-              value={selectedQuestionId}
-              onChange={(e) => setSelectedQuestionId(e.target.value)}
-              className="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-slate-200 focus:outline-none focus:border-blue-500 cursor-pointer"
-            >
-              <option value="">🌟 Randomized / Adaptive (Mix of Fresh Questions - Recommended)</option>
-              {availableQuestions.filter((q) => q.category === "SQL").length > 0 && (
-                <optgroup label="── SQL Live Coding (DuckDB WASM) ──">
-                  {availableQuestions
-                    .filter((q) => q.category === "SQL")
-                    .map((q) => (
-                      <option key={q.id} value={q.id}>
-                        SQL: {q.title}
-                      </option>
-                    ))}
-                </optgroup>
-              )}
-              {availableQuestions.filter((q) => q.category === "PYTHON").length > 0 && (
-                <optgroup label="── Python Algorithms (Pyodide WASM) ──">
-                  {availableQuestions
-                    .filter((q) => q.category === "PYTHON")
-                    .map((q) => (
-                      <option key={q.id} value={q.id}>
-                        Python: {q.title}
-                      </option>
-                    ))}
-                </optgroup>
-              )}
-              {availableQuestions.filter((q) => q.category === "ML_SYSTEM_DESIGN").length > 0 && (
-                <optgroup label="── ML System Design Architecture ──">
-                  {availableQuestions
-                    .filter((q) => q.category === "ML_SYSTEM_DESIGN")
-                    .map((q) => (
-                      <option key={q.id} value={q.id}>
-                        System Design: {q.title}
-                      </option>
-                    ))}
-                </optgroup>
-              )}
-            </select>
-          </div>
 
-          {/* Section 6: Interviewer Persona & Voice Selector */}
-          <div className="space-y-3">
-            <div className="flex items-center justify-between pl-1">
-              <label className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
-                <UserCheck className="w-4 h-4 text-blue-400" /> Choose Interviewer Persona & Voice
-              </label>
-              <span className="text-[10px] text-slate-500 font-medium">
-                Deterministic voice lock across all stages
-              </span>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              {INTERVIEWER_PERSONAS.map((p) => {
-                const isSelected = selectedPersonaId === p.id;
-                return (
-                  <div
-                    key={p.id}
-                    onClick={() => {
-                      setSelectedPersonaId(p.id);
-                      voiceManager.setPersona(p.id);
-                    }}
-                    className={`p-4 rounded-2xl transition-all border relative flex flex-col justify-between cursor-pointer ${
-                      isSelected
-                        ? "bg-blue-600/10 border-blue-500 shadow-lg shadow-blue-500/10"
-                        : "bg-slate-900/50 border-slate-800 hover:border-slate-700"
-                    }`}
-                  >
+              {!resumeFile ? (
+                <label className="border-2 border-dashed border-slate-800 hover:border-blue-500/50 rounded-2xl p-6 flex flex-col items-center justify-center cursor-pointer transition-colors bg-slate-950/50">
+                  <UploadCloud className="w-8 h-8 text-slate-500 mb-2" />
+                  <span className="text-xs font-semibold text-slate-300">
+                    Click to browse or drop your PDF resume here
+                  </span>
+                  <span className="text-[10px] text-slate-500 mt-1">
+                    Processed 100% locally to extract candidate claim graph & technical projects
+                  </span>
+                  <input
+                    type="file"
+                    accept=".pdf"
+                    onChange={handleFileChange}
+                    className="hidden"
+                  />
+                </label>
+              ) : (
+                <div className="flex items-center justify-between p-3.5 rounded-xl bg-slate-950 border border-slate-800">
+                  <div className="flex items-center gap-2.5">
+                    <FileText className="w-5 h-5 text-blue-400" />
                     <div>
-                      <div className="flex items-center justify-between mb-1.5">
-                        <span className="text-xs font-bold text-white">{p.name}</span>
-                        {isSelected ? (
-                          <CheckCircle className="w-4 h-4 text-blue-400" />
-                        ) : null}
-                      </div>
-                      <span className="text-[10px] font-semibold text-blue-400 block mb-2">
-                        {p.title}
-                      </span>
-                      <p className="text-[11px] text-slate-400 leading-relaxed">
-                        {p.description}
+                      <p className="text-xs font-semibold text-slate-200">{resumeFile.name}</p>
+                      <p className="text-[10px] text-slate-500">
+                        {(resumeFile.size / 1024).toFixed(1)} KB — Ready for analysis
                       </p>
                     </div>
-
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setIsTestingVoice(true);
-                        voiceManager.setPersona(p.id);
-                        setSelectedPersonaId(p.id);
-                        voiceManager.speak(
-                          `Hello, I am ${p.name}. I look forward to conducting your technical interview today.`,
-                          {
-                            onEnd: () => setIsTestingVoice(false),
-                          }
-                        );
-                      }}
-                      disabled={isTestingVoice}
-                      className="mt-3 py-1.5 px-3 rounded-lg bg-slate-950 hover:bg-slate-800 border border-slate-800 text-[10px] text-slate-300 font-medium flex items-center justify-center gap-1.5 transition-colors"
-                    >
-                      <Radio className="w-3 h-3 text-blue-400" />
-                      <span>{isTestingVoice && isSelected ? "Speaking..." : "Preview Voice"}</span>
-                    </button>
                   </div>
-                );
-              })}
+                  <button
+                    type="button"
+                    onClick={handleRemoveResume}
+                    className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              )}
             </div>
-          </div>
+          )}
 
-          {/* Submit Button */}
+          {/* Launch Button */}
           <button
             type="submit"
             disabled={isLoading}
-            className={`w-full py-4 rounded-2xl text-base font-bold text-white flex items-center justify-center gap-2 transition-all shadow-xl ${
-              isLoading
-                ? "bg-blue-800 cursor-not-allowed"
-                : "bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 shadow-blue-600/30"
-            }`}
+            className="w-full py-4 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-bold text-sm shadow-xl shadow-blue-600/25 flex items-center justify-center gap-2 transition-all transform hover:scale-[1.01]"
           >
             {isLoading ? (
               <span className="flex items-center gap-2">
-                <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                Initializing Interview Room...
+                <span className="w-4 h-4 rounded-full border-2 border-white/30 border-t-white animate-spin" />
+                Preparing Interview Room...
               </span>
             ) : (
-              <>
-                Enter Live Interview Room <ArrowRight className="w-5 h-5" />
-              </>
+              <span className="flex items-center gap-2">
+                Launch Interview Session <ArrowRight className="w-4 h-4" />
+              </span>
             )}
           </button>
         </form>
       </div>
 
       {/* Footer */}
-      <footer className="max-w-6xl mx-auto w-full text-center text-xs text-slate-500 pt-6 border-t border-slate-900 z-10">
-        ai-interviewer • Open-Source Local-First Technical Evaluation Platform
+      <footer className="max-w-6xl mx-auto w-full pt-8 border-t border-slate-800/80 text-center text-xs text-slate-500 z-10">
+        ai-interviewer • Built for Senior Data Scientists & ML Engineers • 100% Local-First
       </footer>
     </main>
   );

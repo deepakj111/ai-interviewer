@@ -109,8 +109,8 @@ def _generate_dynamic_evaluated_report(
     has_code = len(code_snapshots) > 0
     total_candidate_words = sum(len(t.get("text", "").split()) for t in candidate_turns)
 
-    # If zero or trivial candidate words (< 25 words and no code), assign honest 0.0
-    if len(candidate_turns) == 0 or (total_candidate_words < 25 and not has_code):
+    # Only trigger abrupt termination if candidate provided zero answers
+    if len(candidate_turns) == 0:
         return _generate_abrupt_termination_report(
             target_role=target_role,
             last_stage=transcripts[-1].get("stage", "INTRO") if transcripts else "INTRO",

@@ -1,8 +1,7 @@
 /**
- * Interviewer Voice & Persona Manager.
- * Ensures 100% deterministic, consistent voice synthesis without mid-interview voice changes.
- * Preloads browser voices, locks the selected voice for the session,
- * and fixes Chromium SpeechSynthesis garbage-collection and pause/resume truncation bugs.
+ * Interviewer Voice & Persona Manager (2026 Edition).
+ * Delivers deterministic voice synthesis, speech naturalization for technical terms,
+ * and audio-reactive visualization events.
  */
 
 export interface InterviewerPersona {
@@ -10,8 +9,12 @@ export interface InterviewerPersona {
   name: string;
   title: string;
   gender: "female" | "male";
+  archetype: string;
   description: string;
   avatarSeed: string;
+  avatarImage: string;
+  accent: string;
+  speakingStyle: string;
 }
 
 export const INTERVIEWER_PERSONAS: InterviewerPersona[] = [
@@ -20,24 +23,36 @@ export const INTERVIEWER_PERSONAS: InterviewerPersona[] = [
     name: "Dr. Elena Vance",
     title: "Principal Bar-Raiser",
     gender: "female",
-    description: "Rigorous, analytical, calm bar-raiser probing mathematical depth and edge cases.",
+    archetype: "FAANG / Tier-1 Tech Bar-Raiser",
+    description: "Rigorous, calm, and analytical. Deeply probes mathematical grounding, algorithmic boundaries, and failure modes.",
     avatarSeed: "elena",
+    avatarImage: "/avatars/elena.jpg",
+    accent: "US English",
+    speakingStyle: "Composed, precise, insightful",
   },
   {
     id: "alex",
     name: "Alex Chen",
-    title: "Staff ML Architect",
+    title: "Staff ML Infrastructure Architect",
     gender: "male",
-    description: "Production infrastructure specialist focusing on latency SLAs, feature stores, and scale.",
+    archetype: "Production Systems & Distributed Scale",
+    description: "Practical systems engineer obsessed with p99 latency SLAs, streaming feature pipelines, and high-throughput model serving.",
     avatarSeed: "alex",
+    avatarImage: "/avatars/alex.jpg",
+    accent: "US / International English",
+    speakingStyle: "Energetic, systems-focused, collaborative",
   },
   {
     id: "sarah",
     name: "Sarah Jenkins",
-    title: "Senior Applied Scientist",
+    title: "Senior Staff Applied Scientist",
     gender: "female",
-    description: "Balanced, thorough evaluator assessing statistical grounding, drift, and ML algorithms.",
+    archetype: "Applied ML & Experimentation Lead",
+    description: "Warm yet uncompromising mentor focusing on business-metric alignment, statistical rigor, data leakage, and candidate reasoning.",
     avatarSeed: "sarah",
+    avatarImage: "/avatars/sarah.jpg",
+    accent: "US English",
+    speakingStyle: "Warm, encouraging, rigorous",
   },
 ];
 
@@ -97,25 +112,29 @@ class InterviewerVoiceManager {
     let selected: SpeechSynthesisVoice | undefined;
 
     if (isMale) {
-      // Natural male English voices
+      // Prioritize modern natural / high-clarity male voices
       selected = englishVoices.find(
+        (v) =>
+          v.name.includes("Natural") && (v.name.includes("Guy") || v.name.includes("David") || v.name.includes("Christopher") || v.name.includes("Eric"))
+      ) || englishVoices.find(
         (v) =>
           v.name.includes("Google UK English Male") ||
           v.name.includes("Daniel") ||
           v.name.includes("Guy") ||
           v.name.includes("Arthur") ||
-          v.name.includes("Male") ||
-          v.name.includes("Natural - English (United States) - Guy")
+          v.name.includes("Male")
       );
     } else {
-      // Natural female English voices
+      // Prioritize modern natural / high-clarity female voices
       selected = englishVoices.find(
+        (v) =>
+          v.name.includes("Natural") && (v.name.includes("Jenny") || v.name.includes("Aria") || v.name.includes("Michelle") || v.name.includes("Ava"))
+      ) || englishVoices.find(
         (v) =>
           v.name.includes("Google US English") ||
           v.name.includes("Samantha") ||
           v.name.includes("Jenny") ||
           v.name.includes("Victoria") ||
-          v.name.includes("Natural - English (United States) - Jenny") ||
           v.name.includes("Female")
       );
     }
@@ -131,7 +150,6 @@ class InterviewerVoiceManager {
   public async getLockedVoice(): Promise<SpeechSynthesisVoice | null> {
     if (this.lockedVoice) return this.lockedVoice;
 
-    // Wait up to 1 second for voices to populate if loading asynchronously
     if (!this.isLoaded && typeof window !== "undefined" && "speechSynthesis" in window) {
       await new Promise<void>((resolve) => {
         let attempts = 0;
@@ -153,6 +171,31 @@ class InterviewerVoiceManager {
     return this.resolveAndLockVoice(this.lockedPersonaId);
   }
 
+  /**
+   * Preprocesses technical jargon, math formulas, and code symbols for natural spoken cadence.
+   */
+  public naturalizeTextForSpeech(text: string): string {
+    return text
+      .replace(/```[\s\S]*?```/g, " [I've shared the code sample in your editor.] ")
+      .replace(/`([^`]+)`/g, "$1")
+      .replace(/O\(([A-Za-z0-9_\^\*\+\s]+)\)/gi, "O of $1")
+      .replace(/p99/gi, "P 99")
+      .replace(/p95/gi, "P 95")
+      .replace(/p50/gi, "P 50")
+      .replace(/\bQPS\b/g, "Q P S")
+      .replace(/\bSLA\b/g, "S L A")
+      .replace(/\bSLO\b/g, "S L O")
+      .replace(/\bSQL\b/g, "sequel")
+      .replace(/\bLoRA\b/g, "low-ra")
+      .replace(/\bQLoRA\b/g, "cue low-ra")
+      .replace(/\bLLM\b/g, "L L M")
+      .replace(/\bLLMs\b/g, "L L Ms")
+      .replace(/\bRAG\b/g, "rag")
+      .replace(/[*_#\[\]()]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
   public async speak(
     text: string,
     callbacks?: {
@@ -165,16 +208,9 @@ class InterviewerVoiceManager {
 
     this.cancel();
 
-    // Strip markdown formatting symbols for natural speech
-    const cleanText = text
-      .replace(/[*_#`[\]()]/g, "")
-      .replace(/--.*$/gm, "")
-      .replace(/\s+/g, " ")
-      .trim();
-
+    const cleanText = this.naturalizeTextForSpeech(text);
     if (!cleanText) return;
 
-    // Unpause speech synthesis in case Chromium was stuck in paused state
     if (window.speechSynthesis.paused) {
       window.speechSynthesis.resume();
     }
@@ -184,25 +220,28 @@ class InterviewerVoiceManager {
     if (voice) {
       utterance.voice = voice;
     }
-    utterance.rate = 1.0;
+    utterance.rate = 1.02;
     utterance.pitch = 1.0;
 
-    // Keep persistent references to avoid V8 garbage collection mid-speech
     this.activeUtterance = utterance;
     (window as any).__activeSpeechUtterance = utterance;
 
     utterance.onstart = () => {
       callbacks?.onStart?.();
 
-      // Simulate frequency fluctuation for avatar halo visualizer
+      // Fluid sinusoidal audio wave simulation for reactive halo
+      let phase = 0;
       if (callbacks?.onFrequency) {
         this.animInterval = setInterval(() => {
-          const fakeFreq = 30 + Math.floor(Math.random() * 55);
-          callbacks.onFrequency?.(fakeFreq);
-        }, 120);
+          phase += 0.4;
+          const base = 40 + Math.sin(phase) * 20;
+          const jitter = Math.random() * 25;
+          const level = Math.min(100, Math.max(15, Math.round(base + jitter)));
+          callbacks.onFrequency?.(level);
+        }, 80);
       }
 
-      // Chromium keepalive: SpeechSynthesis can stall after 15 seconds unless resumed
+      // Chromium keepalive: SpeechSynthesis can stall after 14s unless gently pulsed
       if (this.keepAliveTimer) clearInterval(this.keepAliveTimer);
       this.keepAliveTimer = setInterval(() => {
         if (typeof window !== "undefined" && "speechSynthesis" in window) {
@@ -211,7 +250,7 @@ class InterviewerVoiceManager {
             window.speechSynthesis.resume();
           }
         }
-      }, 9000);
+      }, 8000);
     };
 
     const cleanup = () => {
@@ -232,8 +271,7 @@ class InterviewerVoiceManager {
     };
 
     utterance.onend = cleanup;
-    utterance.onerror = (e) => {
-      // In Chromium, 'interrupted' or 'canceled' errors are expected when cancelling
+    utterance.onerror = () => {
       cleanup();
     };
 
